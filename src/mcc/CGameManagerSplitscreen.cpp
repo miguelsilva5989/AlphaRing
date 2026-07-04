@@ -6,6 +6,27 @@
 #include "global/Global.h"
 #include "input/Input.h"
 
+static float CalculateInputDelta(CDeviceManager* device_manager) {
+    static float last_delta_time = 16.666f;
+    LARGE_INTEGER qpc;
+
+    QueryPerformanceCounter(&qpc);
+
+    auto v1 = qpc.QuadPart - device_manager->qpc.QuadPart;
+    auto v2 = device_manager->qpc.QuadPart - qpc.QuadPart;
+    auto delta_time = fminf(fmaxf(MCC::DeltaTime(v1 >= v2 ? v2 : v1) * 1000.0f, 0.1f), 1000.0f);
+
+    // MCC asks for each local player's input back-to-back. Reuse the previous
+    // frame delta for those near-immediate follow-up calls instead of feeding
+    // controller players a zero or near-zero delta.
+    if (delta_time >= 0.5f || last_delta_time <= 0.0f) {
+        last_delta_time = delta_time;
+        device_manager->qpc = qpc;
+    }
+
+    return last_delta_time;
+}
+
 void CGameManager::set_vibration(CGameManager *self, DWORD dwUserIndex, XINPUT_VIBRATION *pVibration) {
     CInputDevice* p_device;
     auto p_setting = AlphaRing::Global::MCC::Splitscreen();
@@ -45,8 +66,6 @@ bool CGameManager::get_xbox_user_id(CGameManager *self, __int64 *pId, wchar_t *p
 
 bool CGameManager::get_key_state(CGameManager *self, DWORD index, input_data_t *p_input) {
     bool result;
-    LARGE_INTEGER qpc;
-    float delta_time = 0;
     CInputDevice* p_device;
 
     auto p_profile = AlphaRing::Global::MCC::Splitscreen();
@@ -68,14 +87,11 @@ bool CGameManager::get_key_state(CGameManager *self, DWORD index, input_data_t *
     if (index >= p_profile->player_count)
         return false;
 
+    auto delta_time = CalculateInputDelta(device_manager);
+
     if (p_profile->b_player0_use_km && !index) {
         p_device = device_manager->p_input_device[4];
         device_manager->table->update_state(device_manager, 0, 0, false);
-        QueryPerformanceCounter(&qpc);
-        auto v1 = qpc.QuadPart - device_manager->qpc.QuadPart;
-        auto v2 = device_manager->qpc.QuadPart - qpc.QuadPart;
-        delta_time = fminf(fmaxf(MCC::DeltaTime(v1 >= v2 ? v2 : v1) * 1000.0,0.1), 1000.0);
-        device_manager->qpc = qpc;
     } else {
         if ((p_device = get_controller(index)) == nullptr)
             return true;

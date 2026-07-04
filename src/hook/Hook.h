@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <initializer_list>
 
 #define DefDetourFunction(return_type, call_type, name, ...) \
@@ -11,6 +12,12 @@ namespace AlphaRing::Hook {
         const char* function_name;
         void** ppOriginal;
         void* detour;
+
+        template<typename Detour>
+        DetourFunction(const char* function_name, void** ppOriginal, Detour detour)
+            : function_name(function_name),
+              ppOriginal(ppOriginal),
+              detour(reinterpret_cast<void*>(detour)) {}
     };
 
     struct DetourOffset {
@@ -18,6 +25,13 @@ namespace AlphaRing::Hook {
         __int64 offset_ws;
         void* detour;
         void** ppOriginal;
+
+        template<typename Detour>
+        DetourOffset(__int64 offset_steam, __int64 offset_ws, Detour detour, void** ppOriginal)
+            : offset_steam(offset_steam),
+              offset_ws(offset_ws),
+              detour(reinterpret_cast<void*>(detour)),
+              ppOriginal(ppOriginal) {}
     };
 
     struct FunctionOffset {
@@ -43,6 +57,12 @@ namespace AlphaRing::Hook {
         void* pTarget;
         void* detour;
         void** ppOriginal;
+
+        template<typename Target, typename Detour>
+        Detour_t(Target pTarget, Detour detour, void** ppOriginal)
+            : pTarget(reinterpret_cast<void*>(pTarget)),
+              detour(reinterpret_cast<void*>(detour)),
+              ppOriginal(ppOriginal) {}
     };
 
     bool Initialize();

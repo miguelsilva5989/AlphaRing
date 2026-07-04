@@ -29,7 +29,7 @@ ModuleDefinition::ModuleDefinition(const char *moduleName, std::initializer_list
     // Find Function
     void *func_ptr;
     for (auto func: funcs) {
-        if ((func_ptr = GetProcAddress(m_hModule, func)) == nullptr) {
+        if ((func_ptr = reinterpret_cast<void*>(GetProcAddress(m_hModule, func))) == nullptr) {
             LogError((std::string("Unable to load function: ") + func).c_str());
             ExitProcess(1);
         }

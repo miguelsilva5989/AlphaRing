@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #define MAX_PATH 260
 
 namespace AlphaRing::Filesystem {

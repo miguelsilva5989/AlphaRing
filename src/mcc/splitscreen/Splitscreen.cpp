@@ -79,7 +79,8 @@ namespace MCC::Splitscreen {
         }
     }
 
-    void ProfileContext(int index) {
+    bool ProfileContext(int index) {
+        bool dirty = false;
         char buffer[1024];
         auto p_setting = AlphaRing::Global::MCC::Splitscreen();
         auto p_profile = CGameManager::get_profile(index);
@@ -87,22 +88,42 @@ namespace MCC::Splitscreen {
 
         ImGui::PushItemWidth(200);
         String::convert(buffer, p_profile->name, 1024);
-        if (ImGui::InputText("Name", buffer, sizeof(buffer)))
+        if (ImGui::InputText("Name", buffer, sizeof(buffer))) {
             String::convert(p_profile->name, buffer, 1024);
+            dirty = true;
+        }
         ImGui::PopItemWidth();
 
-        ImGui::BeginDisabled(!index && p_setting->b_player0_use_km);
+        if (!index && s_binding_player != index) {
+            int input = p_setting->b_player0_use_km ? 0 : p_profile->controller_index + 1;
+            ImGui::PushItemWidth(200);
+            if (ImGui::Combo("Input", &input, "Keyboard / Mouse\0Controller 1\0Controller 2\0Controller 3\0Controller 4\0NONE\0")) {
+                p_setting->b_player0_use_km = input == 0;
 
-        // Check for controller binding completion
-        if (s_binding_player == index) {
+                if (!p_setting->b_player0_use_km)
+                    p_profile->controller_index = input - 1;
+
+                dirty = true;
+            }
+            ImGui::PopItemWidth();
+            if (!p_setting->b_player0_use_km) {
+                ImGui::SameLine();
+                sprintf(buffer, "Bind##ctrl%d", index);
+                if (ImGui::Button(buffer) && s_binding_player < 0) {
+                    s_binding_player = index;
+                }
+            }
+        } else if (s_binding_player == index) {
+            // Check for controller binding completion
             int detected = DetectActiveController();
             if (detected >= 0) {
                 p_profile->controller_index = detected;
+                if (!index)
+                    p_setting->b_player0_use_km = false;
                 s_binding_player = -1;
+                dirty = true;
             }
-        }
 
-        if (s_binding_player == index) {
             // Show binding prompt
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press any button on controller...");
             ImGui::SameLine();
@@ -112,7 +133,8 @@ namespace MCC::Splitscreen {
         } else {
             // Show dropdown and bind button
             ImGui::PushItemWidth(200);
-            ImGui::Combo("Input", &p_profile->controller_index, items, IM_ARRAYSIZE(items));
+            if (ImGui::Combo("Input", &p_profile->controller_index, items, IM_ARRAYSIZE(items)))
+                dirty = true;
             ImGui::PopItemWidth();
             ImGui::SameLine();
             sprintf(buffer, "Bind##ctrl%d", index);
@@ -120,8 +142,6 @@ namespace MCC::Splitscreen {
                 s_binding_player = index;
             }
         }
-
-        ImGui::EndDisabled();
 
         if (ImGui::Button("Apply Profile")) {
             LOG_INFO("Apply Profile clicked for player {}", index);
@@ -169,6 +189,8 @@ namespace MCC::Splitscreen {
             ImGui::EndDisabled();
             ImGui::Unindent();
         }
+
+        return dirty;
     }
 
     void RealContext() {
@@ -224,7 +246,7 @@ namespace MCC::Splitscreen {
             for (int i = 0; i < p_setting->player_count; ++i) {
                 sprintf(buffer, "Player %d", i + 1);
                 if (ImGui::BeginTabItem(buffer)) {
-                    ProfileContext(i);
+                    dirty |= ProfileContext(i);
                     ImGui::EndTabItem();
                 }
             }

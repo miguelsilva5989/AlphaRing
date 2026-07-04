@@ -2,4 +2,5 @@ cmake-build-release/
 cmake-build-debug/
 .idea/
 build/
+build-mingw/
 /.vs

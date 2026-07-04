@@ -96,7 +96,7 @@ namespace AlphaRing::Hook {
             return false;
 
         for (auto &hook : hooks) {
-            auto pTarget = GetProcAddress(hModule, hook.function_name);
+            auto pTarget = reinterpret_cast<void*>(GetProcAddress(hModule, hook.function_name));
 
             if (pTarget == nullptr)
                 return false;

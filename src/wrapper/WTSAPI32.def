@@ -1,0 +1,8 @@
+LIBRARY WTSAPI32
+
+EXPORTS
+    WTSRegisterSessionNotification=WTSRegisterSessionNotificationWrapper
+    WTSUnRegisterSessionNotification=WTSUnRegisterSessionNotificationWrapper
+    WTSQueryUserToken=WTSQueryUserTokenWrapper
+    WTSQuerySessionInformationW=WTSQuerySessionInformationWWrapper
+    WTSFreeMemory=WTSFreeMemoryWrapper

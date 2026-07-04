@@ -11,6 +11,18 @@ namespace AlphaRing::Log {
     std::shared_ptr<spdlog::logger> default_logger;
     static bool console_allocated = false;
 
+    static bool ConsoleLoggingEnabled() {
+        char value[8] = {};
+        if (!GetEnvironmentVariableA("ALPHARING_CONSOLE", value, sizeof(value)))
+            return false;
+
+        return value[0] == '1' ||
+               value[0] == 'y' ||
+               value[0] == 'Y' ||
+               value[0] == 't' ||
+               value[0] == 'T';
+    }
+
     bool Init() {
         try {
             // Get the path to the DLL (win64 folder)
@@ -30,9 +42,9 @@ namespace AlphaRing::Log {
             file_sink->set_level(spdlog::level::debug);
             sinks.push_back(file_sink);
 
-            // Console sink - allocate console for debug visibility
-            console_allocated = AllocConsole();
-            if (console_allocated) {
+            // Console sink - opt in because Proton gives AllocConsole its own focusable window.
+            if (ConsoleLoggingEnabled() && AllocConsole()) {
+                console_allocated = true;
                 freopen("CONIN$", "r", stdin);
                 freopen("CONOUT$", "w", stdout);
                 freopen("CONOUT$", "w", stderr);

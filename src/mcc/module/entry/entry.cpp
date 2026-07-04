@@ -18,7 +18,7 @@ bool Entry::update(__int64 hModule) {
 
     if (hModule == 0) return false;
 
-    if (m_target) MH_RemoveHook((void*)m_target, true);
+    if (m_target) MH_RemoveHook((void*)m_target);
 
     m_target = m_offset + hModule;
 

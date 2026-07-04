@@ -8,6 +8,10 @@ struct Entry {
 public:
     Entry(EntrySet* set, __int64 offset, void* pDetour);
 
+    template<typename Detour>
+    Entry(EntrySet* set, __int64 offset, Detour pDetour)
+        : Entry(set, offset, reinterpret_cast<void*>(pDetour)) {}
+
     bool update(__int64 hModule);
 
     __int64 m_offset;
