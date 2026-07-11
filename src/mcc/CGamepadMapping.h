@@ -15,7 +15,7 @@ struct CGamepadMapping {
 
     eButton actions[66];
 
-    void ImGuiContext();
+    void ImGuiContext(int preferred_controller = -1);
     void ResetToDefaults();
 
     static const std::array<const char*, 17>* ButtonNames();

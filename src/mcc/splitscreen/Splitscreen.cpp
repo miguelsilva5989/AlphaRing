@@ -40,224 +40,511 @@ namespace MCC::Splitscreen {
 #include "mcc/mcc.h"
 #include "input/Input.h"
 #include "log/Log.h"
+#include "render/d3d11/D3d11.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace MCC::Splitscreen {
     void RealContext();
 
-    // Detect which controller (0-3) has any button/trigger pressed, returns -1 if none
+    static int s_binding_player = -1;
+    static bool s_binding_waiting_for_release = false;
+    static char s_binding_error[96] = {};
+    static int s_selected_player = 0;
+    static bool s_profile_save_pending = false;
+
+    static constexpr int kControllerCount = 4;
+    static constexpr int kUnassignedController = 4;
+    static constexpr ImVec4 kSuccessColor {0.32f, 0.79f, 0.58f, 1.0f};
+    static constexpr ImVec4 kWarningColor {0.95f, 0.68f, 0.30f, 1.0f};
+    static constexpr ImVec4 kErrorColor {0.91f, 0.35f, 0.33f, 1.0f};
+
+    static bool ControllerConnected(int controller) {
+        XINPUT_STATE state {};
+        return controller >= 0 && controller < kControllerCount &&
+               AlphaRing::Input::GetXInputGetState(controller, &state);
+    }
+
+    static bool ControllerHasBindingInput(int controller) {
+        XINPUT_STATE state {};
+        if (!AlphaRing::Input::GetXInputGetState(controller, &state))
+            return false;
+
+        return state.Gamepad.wButtons != 0 ||
+               state.Gamepad.bLeftTrigger > 30 ||
+               state.Gamepad.bRightTrigger > 30;
+    }
+
     static int DetectActiveController() {
-        for (int i = 0; i < 4; i++) {
-            XINPUT_STATE state;
-            if (AlphaRing::Input::GetXInputGetState(i, &state)) {
-                if (state.Gamepad.wButtons != 0 ||
-                    state.Gamepad.bLeftTrigger > 30 ||
-                    state.Gamepad.bRightTrigger > 30) {
-                    return i;
-                }
-            }
+        for (int i = 0; i < kControllerCount; ++i) {
+            if (ControllerHasBindingInput(i))
+                return i;
         }
         return -1;
     }
 
-    // Binding state: which player slot is waiting for controller input (-1 = none)
-    static int s_binding_player = -1;
+    static int ControllerOwner(int controller, int except_player = -1) {
+        const auto* settings = AlphaRing::Global::MCC::Splitscreen();
+        for (int player = 0; player < settings->player_count; ++player) {
+            if (player == except_player || (player == 0 && settings->b_player0_use_km))
+                continue;
+
+            const auto* profile = CGameManager::get_profile(player);
+            if (profile && profile->controller_index == controller)
+                return player;
+        }
+        return -1;
+    }
+
+    static void AssignKeyboard(int player) {
+        if (player == 0)
+            AlphaRing::Global::MCC::Splitscreen()->b_player0_use_km = true;
+    }
+
+    static void AssignController(int player, int controller) {
+        auto* profile = CGameManager::get_profile(player);
+        if (!profile)
+            return;
+
+        profile->controller_index = controller;
+        if (player == 0)
+            AlphaRing::Global::MCC::Splitscreen()->b_player0_use_km = false;
+    }
+
+    static const char* CurrentInputLabel(int player, char* buffer, size_t size) {
+        const auto* settings = AlphaRing::Global::MCC::Splitscreen();
+        const auto* profile = CGameManager::get_profile(player);
+        if (player == 0 && settings->b_player0_use_km)
+            return "Keyboard + mouse";
+        if (!profile || profile->controller_index < 0 || profile->controller_index >= kControllerCount)
+            return "Not assigned";
+
+        std::snprintf(
+                buffer,
+                size,
+                "Controller %d%s",
+                profile->controller_index + 1,
+                ControllerConnected(profile->controller_index) ? " - connected" : " - disconnected"
+        );
+        return buffer;
+    }
+
+    static bool DrawInputSelector(int player) {
+        bool changed = false;
+        char preview_buffer[80];
+        char option_buffer[80];
+        const char* preview = CurrentInputLabel(player, preview_buffer, sizeof(preview_buffer));
+
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##input", preview)) {
+            const auto* settings = AlphaRing::Global::MCC::Splitscreen();
+            const auto* profile = CGameManager::get_profile(player);
+
+            if (player == 0) {
+                const bool selected = settings->b_player0_use_km;
+                if (ImGui::Selectable("Keyboard + mouse", selected)) {
+                    AssignKeyboard(player);
+                    changed = true;
+                }
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+                ImGui::Separator();
+            }
+
+            for (int controller = 0; controller < kControllerCount; ++controller) {
+                const int owner = ControllerOwner(controller, player);
+                if (owner >= 0) {
+                    std::snprintf(
+                            option_buffer,
+                            sizeof(option_buffer),
+                            "Controller %d - Player %d",
+                            controller + 1,
+                            owner + 1
+                    );
+                } else {
+                    std::snprintf(
+                            option_buffer,
+                            sizeof(option_buffer),
+                            "Controller %d - %s",
+                            controller + 1,
+                            ControllerConnected(controller) ? "connected" : "disconnected"
+                    );
+                }
+
+                const bool selected = !settings->b_player0_use_km && profile &&
+                                      profile->controller_index == controller;
+                ImGui::BeginDisabled(owner >= 0);
+                if (ImGui::Selectable(option_buffer, selected)) {
+                    AssignController(player, controller);
+                    changed = true;
+                }
+                ImGui::EndDisabled();
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+
+            ImGui::Separator();
+            const bool unassigned = !settings->b_player0_use_km &&
+                                    (!profile || profile->controller_index < 0 ||
+                                     profile->controller_index >= kControllerCount);
+            if (ImGui::Selectable("Not assigned", unassigned)) {
+                AssignController(player, kUnassignedController);
+                changed = true;
+            }
+            ImGui::EndCombo();
+        }
+
+        return changed;
+    }
+
+    static void BeginControllerBinding(int player) {
+        s_binding_player = player;
+        s_binding_waiting_for_release = true;
+        s_binding_error[0] = '\0';
+    }
+
+    static bool UpdateControllerBinding() {
+        if (s_binding_player < 0)
+            return false;
+
+        if (s_binding_waiting_for_release) {
+            if (DetectActiveController() < 0)
+                s_binding_waiting_for_release = false;
+            return false;
+        }
+
+        const int controller = DetectActiveController();
+        if (controller < 0)
+            return false;
+
+        const int owner = ControllerOwner(controller, s_binding_player);
+        if (owner >= 0) {
+            std::snprintf(
+                    s_binding_error,
+                    sizeof(s_binding_error),
+                    "Controller %d is assigned to Player %d",
+                    controller + 1,
+                    owner + 1
+            );
+            s_binding_waiting_for_release = true;
+            return false;
+        }
+
+        AssignController(s_binding_player, controller);
+        s_selected_player = s_binding_player;
+        s_profile_save_pending = true;
+        s_binding_player = -1;
+        s_binding_error[0] = '\0';
+        return true;
+    }
+
+    static bool DrawPlayerCount(int* count) {
+        bool changed = false;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Players");
+        ImGui::SameLine();
+        for (int value = 1; value <= 4; ++value) {
+            ImGui::PushID(value);
+            if (*count == value) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            if (ImGui::Button(std::to_string(value).c_str(), ImVec2(38.0f, 0.0f))) {
+                *count = value;
+                changed = true;
+            }
+            if (*count == value)
+                ImGui::PopStyleColor(2);
+            ImGui::PopID();
+            if (value != 4)
+                ImGui::SameLine(0.0f, 4.0f);
+        }
+        return changed;
+    }
+
+    static bool CopyCurrentMccProfile(int player) {
+        LOG_INFO("Copy current MCC profile for player {}", player);
+        __int64 xuid;
+        auto* manager = GameManager();
+        auto* engine = GameEngine();
+        auto* destination = CGameManager::get_profile(player);
+        if (!destination || !MCC::IsInGame() || !manager || !(xuid = CGameManager::get_xuid(0)))
+            return false;
+
+        auto* source_profile = manager->ppOriginal.get_player_profile(manager, xuid);
+        auto* source_mapping = manager->ppOriginal.retrive_gamepad_mapping(manager, xuid);
+        if (!source_profile || !source_mapping) {
+            LOG_ERROR("Copy current MCC profile: source profile or mapping unavailable");
+            return false;
+        }
+
+        std::memcpy(&destination->profile, source_profile, sizeof(CUserProfile));
+        std::memcpy(&destination->mapping, source_mapping, sizeof(CGamepadMapping));
+        if (engine)
+            engine->load_setting();
+        return true;
+    }
 
     void ImGuiContext() {
-        static bool show_splitscreen;
+        static bool show_splitscreen = true;
 
         if (ImGui::BeginMainMenuBar()) {
-            ImGui::MenuItem("Splitscreen", nullptr, &show_splitscreen);
+            ImGui::MenuItem("Split Screen", nullptr, &show_splitscreen);
             ImGui::EndMainMenuBar();
         }
 
         if (show_splitscreen) {
-            if (ImGui::Begin("Splitscreen", &show_splitscreen, ImGuiWindowFlags_MenuBar))
+            ImGui::SetNextWindowSize(ImVec2(780.0f, 720.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(620.0f, 480.0f), ImVec2(1200.0f, 1100.0f));
+            if (ImGui::Begin("Split Screen Setup", &show_splitscreen, ImGuiWindowFlags_NoCollapse))
                 RealContext();
             ImGui::End();
         }
     }
 
-    bool ProfileContext(int index) {
+    static bool DrawPlayerRow(int index) {
         bool dirty = false;
         char buffer[1024];
-        auto p_setting = AlphaRing::Global::MCC::Splitscreen();
-        auto p_profile = CGameManager::get_profile(index);
-        const char* items[] = {"Controller 1", "Controller 2", "Controller 3", "Controller 4", "NONE"};
+        auto* profile = CGameManager::get_profile(index);
+        if (!profile)
+            return false;
 
-        ImGui::PushItemWidth(200);
-        String::convert(buffer, p_profile->name, 1024);
-        if (ImGui::InputText("Name", buffer, sizeof(buffer))) {
-            String::convert(p_profile->name, buffer, 1024);
+        ImGui::PushID(index);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        char player_label[24];
+        std::snprintf(player_label, sizeof(player_label), "Player %d", index + 1);
+        if (ImGui::Selectable(player_label, s_selected_player == index))
+            s_selected_player = index;
+
+        ImGui::TableSetColumnIndex(1);
+        String::convert(buffer, profile->name, sizeof(buffer));
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::InputText("##name", buffer, sizeof(buffer))) {
+            String::convert(profile->name, buffer, sizeof(buffer));
             dirty = true;
+            s_profile_save_pending = true;
         }
-        ImGui::PopItemWidth();
 
-        if (!index && s_binding_player != index) {
-            int input = p_setting->b_player0_use_km ? 0 : p_profile->controller_index + 1;
-            ImGui::PushItemWidth(200);
-            if (ImGui::Combo("Input", &input, "Keyboard / Mouse\0Controller 1\0Controller 2\0Controller 3\0Controller 4\0NONE\0")) {
-                p_setting->b_player0_use_km = input == 0;
+        ImGui::TableSetColumnIndex(2);
+        const bool input_changed = DrawInputSelector(index);
+        dirty |= input_changed;
+        s_profile_save_pending |= input_changed;
 
-                if (!p_setting->b_player0_use_km)
-                    p_profile->controller_index = input - 1;
-
-                dirty = true;
-            }
-            ImGui::PopItemWidth();
-            if (!p_setting->b_player0_use_km) {
-                ImGui::SameLine();
-                sprintf(buffer, "Bind##ctrl%d", index);
-                if (ImGui::Button(buffer) && s_binding_player < 0) {
-                    s_binding_player = index;
-                }
-            }
-        } else if (s_binding_player == index) {
-            // Check for controller binding completion
-            int detected = DetectActiveController();
-            if (detected >= 0) {
-                p_profile->controller_index = detected;
-                if (!index)
-                    p_setting->b_player0_use_km = false;
-                s_binding_player = -1;
-                dirty = true;
-            }
-
-            // Show binding prompt
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press any button on controller...");
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) {
-                s_binding_player = -1;
-            }
+        ImGui::TableSetColumnIndex(3);
+        if (s_binding_player == index) {
+            ImGui::TextColored(kWarningColor, s_binding_waiting_for_release ? "Release buttons" : "Listening...");
         } else {
-            // Show dropdown and bind button
-            ImGui::PushItemWidth(200);
-            if (ImGui::Combo("Input", &p_profile->controller_index, items, IM_ARRAYSIZE(items)))
-                dirty = true;
-            ImGui::PopItemWidth();
+            ImGui::BeginDisabled(s_binding_player >= 0);
+            if (ImGui::Button("Detect", ImVec2(-1.0f, 0.0f)))
+                BeginControllerBinding(index);
+            ImGui::EndDisabled();
+        }
+        ImGui::PopID();
+
+        return dirty;
+    }
+
+    static bool DrawPlayersPage() {
+        bool dirty = UpdateControllerBinding();
+        auto* settings = AlphaRing::Global::MCC::Splitscreen();
+        s_selected_player = std::clamp(s_selected_player, 0, settings->player_count - 1);
+
+        if (s_binding_player >= 0) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.12f, 0.06f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.50f, 0.34f, 0.12f, 1.0f));
+            ImGui::BeginChild("ControllerBinding", ImVec2(0.0f, 72.0f), true);
+            ImGui::TextColored(kWarningColor, "Player %d controller detection", s_binding_player + 1);
             ImGui::SameLine();
-            sprintf(buffer, "Bind##ctrl%d", index);
-            if (ImGui::Button(buffer) && s_binding_player < 0) {
-                s_binding_player = index;
+            if (ImGui::SmallButton("Cancel")) {
+                s_binding_player = -1;
+                s_binding_error[0] = '\0';
             }
+            ImGui::TextDisabled(s_binding_waiting_for_release ? "Release all controller buttons" : "Press a button on the controller");
+            if (s_binding_error[0])
+                ImGui::TextColored(kErrorColor, "%s", s_binding_error);
+            ImGui::EndChild();
+            ImGui::PopStyleColor(2);
+            ImGui::Spacing();
         }
 
-        if (ImGui::Button("Apply Profile")) {
-            LOG_INFO("Apply Profile clicked for player {}", index);
-            __int64 xuid;
-            auto p_mng = GameManager();
-            auto p_engine = GameEngine();
-            if (MCC::IsInGame() && p_mng && (xuid = CGameManager::get_xuid(0))) {
-                auto src_profile = p_mng->ppOriginal.get_player_profile(p_mng, xuid);
-                auto src_mapping = p_mng->ppOriginal.retrive_gamepad_mapping(p_mng, xuid);
-                LOG_DEBUG("Apply Profile: src_profile={:p}, src_mapping={:p}", (void*)src_profile, (void*)src_mapping);
-                if (src_profile && src_mapping) {
-                    memcpy(&p_profile->profile, src_profile, sizeof(CUserProfile));
-                    memcpy(&p_profile->mapping, src_mapping, sizeof(CGamepadMapping));
-                    LOG_INFO("Apply Profile: Copied profile and mapping to player {}", index);
-                    if (p_engine)
-                        p_engine->load_setting();
-                } else {
-                    LOG_ERROR("Apply Profile: Source profile or mapping is null!");
-                }
-            } else {
-                LOG_WARNING("Apply Profile: Not in game or GameManager unavailable");
-            }
+        const ImGuiTableFlags table_flags = ImGuiTableFlags_BordersInnerH |
+                                            ImGuiTableFlags_RowBg |
+                                            ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("PlayersTable", 4, table_flags)) {
+            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.8f);
+            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+            ImGui::TableHeadersRow();
+            for (int player = 0; player < settings->player_count; ++player)
+                dirty |= DrawPlayerRow(player);
+            ImGui::EndTable();
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Use this in game!!!");
-        if (ImGui::Button("Save Profile")) {
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Player settings");
+        auto* profile = CGameManager::get_profile(s_selected_player);
+        if (!profile)
+            return dirty;
+
+        ImGui::Text("Player %d", s_selected_player + 1);
+        ImGui::SameLine();
+        char input_buffer[80];
+        ImGui::TextDisabled("%s", CurrentInputLabel(s_selected_player, input_buffer, sizeof(input_buffer)));
+
+        ImGui::BeginDisabled(!MCC::IsInGame());
+        if (ImGui::Button("Copy current MCC settings"))
+            CopyCurrentMccProfile(s_selected_player);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Save player profiles")) {
             MCC::Settings::Profile::CaptureFromRuntime();
             MCC::Settings::Profile::Save();
         }
 
-        bool is_disabled = (!index && !p_setting->b_override_profile) || (index && p_setting->b_use_player0_profile);
-
-        if (ImGui::CollapsingHeader("Gamepad Mapping")) {
+        const bool profile_disabled = (!s_selected_player && !settings->b_override_profile) ||
+                                      (s_selected_player && settings->b_use_player0_profile);
+        ImGui::BeginDisabled(profile_disabled);
+        if (ImGui::CollapsingHeader("Controller mapping")) {
             ImGui::Indent();
-            ImGui::BeginDisabled(is_disabled);
-            p_profile->mapping.ImGuiContext();
-            ImGui::EndDisabled();
+            profile->mapping.ImGuiContext(profile->controller_index);
             ImGui::Unindent();
         }
-
-        if (ImGui::CollapsingHeader("Profile")) {
+        if (ImGui::CollapsingHeader("Profile options")) {
             ImGui::Indent();
-            ImGui::BeginDisabled(is_disabled);
-            p_profile->profile.ImGuiContext();
-            ImGui::EndDisabled();
+            profile->profile.ImGuiContext();
             ImGui::Unindent();
         }
+        ImGui::EndDisabled();
 
+        if (profile_disabled)
+            ImGui::TextDisabled("Custom profile options are disabled by the shared-profile settings.");
+        return dirty;
+    }
+
+    static void DrawMonitorRect(const char* label, AlphaRing::Render::D3d11::RectI& rect) {
+        ImGui::PushID(label);
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(label);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputInt2("##position", &rect.x);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputInt2("##size", &rect.w);
+        ImGui::PopID();
+    }
+
+    static void DrawDisplaysPage() {
+        auto& monitor = AlphaRing::Render::D3d11::MonitorSplit();
+
+        ImGui::SeparatorText("Output windows");
+        ImGui::Checkbox("Auto-detect monitors", &monitor.auto_detect_monitors);
+        ImGui::Checkbox("Show only during split gameplay", &monitor.auto_hide_when_not_split);
+        ImGui::Checkbox("Match primary monitor aspect", &monitor.match_primary_aspect);
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Native player resolution");
+        bool native_requested = monitor.native_ce_render;
+        ImGui::BeginDisabled(AlphaRing::Render::D3d11::NativeRenderActive());
+        if (ImGui::Checkbox("Enable for Halo CE", &native_requested))
+            AlphaRing::Render::D3d11::SetNativeRenderEnabled(native_requested);
+        ImGui::EndDisabled();
+
+        ImGui::TextDisabled("Compatibility");
+        ImGui::SameLine();
+        ImGui::TextColored(kWarningColor, "Halo CE / Classic graphics");
+        ImGui::TextDisabled("Renderer");
+        ImGui::SameLine();
+        ImGui::TextUnformatted(AlphaRing::Render::D3d11::NativeRenderStatus());
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Monitor layout");
+        if (ImGui::BeginTable("MonitorLayout", 3, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Output", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+            ImGui::TableSetupColumn("Position", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Resolution", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableHeadersRow();
+            ImGui::BeginDisabled(monitor.auto_detect_monitors);
+            DrawMonitorRect("Player 1", monitor.player[0]);
+            DrawMonitorRect("Player 2", monitor.player[1]);
+            ImGui::EndDisabled();
+            ImGui::EndTable();
+        }
+
+        ImGui::Spacing();
+        if (!monitor.mirror_windows_enabled) {
+            if (ImGui::Button("Start output windows", ImVec2(190.0f, 0.0f)))
+                AlphaRing::Render::D3d11::StartMirrorSplitWindows();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.18f, 0.17f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.58f, 0.22f, 0.20f, 1.0f));
+            if (ImGui::Button("Stop output windows", ImVec2(190.0f, 0.0f)))
+                AlphaRing::Render::D3d11::StopMirrorSplitWindows();
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            ImGui::TextColored(kSuccessColor, "Active");
+        }
+    }
+
+    static bool DrawAdvancedPage() {
+        bool dirty = false;
+        auto* settings = AlphaRing::Global::MCC::Splitscreen();
+        ImGui::SeparatorText("Profiles");
+        dirty |= ImGui::Checkbox("Use Player 1 profile for other players", &settings->b_use_player0_profile);
+        dirty |= ImGui::Checkbox("Override Player 1 profile", &settings->b_override_profile);
         return dirty;
     }
 
     void RealContext() {
         bool dirty = false;
-        char buffer[10];
-        auto p_setting = AlphaRing::Global::MCC::Splitscreen();
+        auto* settings = AlphaRing::Global::MCC::Splitscreen();
+        settings->player_count = std::clamp(settings->player_count, 1, 4);
+        if (s_binding_player >= settings->player_count)
+            s_binding_player = -1;
 
-        if (ImGui::BeginMenuBar()) {
-            // ImGui::MenuItem(p_setting->b_override ? "Disable" : "Enable", nullptr, &p_setting->b_override);
-            dirty |= ImGui::MenuItem(
-                p_setting->b_override ? "Disable" : "Enable",
-                nullptr,
-                &p_setting->b_override
-            );
-            if (ImGui::BeginMenu("Options")) {
-                // ImGui::MenuItem("Use player1's profile", nullptr, &p_setting->b_use_player0_profile);
-                dirty |= ImGui::MenuItem(
-                    "Use player1's profile", 
-                    nullptr, 
-                    &p_setting->b_use_player0_profile
-                );
-                // ImGui::MenuItem("Enable K/M for player1", nullptr, &p_setting->b_player0_use_km);
-                dirty |= ImGui::MenuItem(
-                    "Enable K/M for player1", 
-                    nullptr, 
-                    &p_setting->b_player0_use_km
-                );
-                // ImGui::MenuItem("Override profile", nullptr, &p_setting->b_override_profile);
-                dirty |= ImGui::MenuItem(
-                    "Override profile", 
-                    nullptr, 
-                    &p_setting->b_override_profile
-                );
-                ImGui::EndMenu();
-            }
-#pragma region player count
-            ImGui::PushItemWidth(200);
-            // int count = p_setting->player_count;
-            // if (ImGui::InputInt("Players", &count) && count >= 1 && count <=4) {
-            //     p_setting->player_count = count;
-            // }
-            int count = p_setting->player_count;
-            if (ImGui::InputInt("Players", &count) && count >= 1 && count <= 4) {
-                p_setting->player_count = count;
-                dirty = true;
-            }
-            ImGui::PopItemWidth();
-            ImGui::EndMenuBar();
-#pragma endregion
-        }
+        ImGui::BeginGroup();
+        dirty |= ImGui::Checkbox("Enable split screen", &settings->b_override);
+        ImGui::SameLine();
+        ImGui::TextColored(settings->b_override ? kSuccessColor : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled),
+                           settings->b_override ? "Enabled" : "Disabled");
+        ImGui::EndGroup();
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 235.0f);
+        dirty |= DrawPlayerCount(&settings->player_count);
 
-        if (ImGui::BeginTabBar("Players")) {
-            for (int i = 0; i < p_setting->player_count; ++i) {
-                sprintf(buffer, "Player %d", i + 1);
-                if (ImGui::BeginTabItem(buffer)) {
-                    dirty |= ProfileContext(i);
-                    ImGui::EndTabItem();
-                }
+        ImGui::Spacing();
+        if (ImGui::BeginTabBar("SplitSetupTabs")) {
+            if (ImGui::BeginTabItem("Players")) {
+                ImGui::Spacing();
+                dirty |= DrawPlayersPage();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Displays (Experimental)")) {
+                ImGui::Spacing();
+                DrawDisplaysPage();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Advanced")) {
+                ImGui::Spacing();
+                dirty |= DrawAdvancedPage();
+                ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
         }
 
         if (dirty) {
             MCC::Settings::Splitscreen::CaptureFromRuntime();
-            // MCC::Settings::Profile::CaptureFromRuntime();
             MCC::Settings::Splitscreen::Save();
-            // MCC::Settings::Profile::Save();
+        }
+        if (s_profile_save_pending && !ImGui::IsAnyItemActive()) {
+            MCC::Settings::Profile::CaptureFromRuntime();
+            MCC::Settings::Profile::Save();
+            s_profile_save_pending = false;
         }
     }
 }

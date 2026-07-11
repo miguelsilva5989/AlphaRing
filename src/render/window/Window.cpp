@@ -50,6 +50,16 @@ namespace AlphaRing::Render::Window {
                     case VK_F4:
                         AlphaRing::Global::Global()->show_imgui = !AlphaRing::Global::Global()->show_imgui;
                         return true;
+                    case VK_ESCAPE:
+                        AlphaRing::Render::D3d11::NotifyGameMenuKey();
+                        break;
+                    case 'W':
+                    case 'A':
+                    case 'S':
+                    case 'D':
+                    case VK_SPACE:
+                        AlphaRing::Render::D3d11::NotifyGameplayInput();
+                        break;
                 }
                 break;
             }

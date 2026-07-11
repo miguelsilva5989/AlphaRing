@@ -280,7 +280,18 @@ namespace MCC::Settings {
     bool Splitscreen::Save() {
         fs::path path = GetConfigPath();
 
-        json j;
+        json j = json::object();
+        if (fs::exists(path)) {
+            std::ifstream existing(path);
+            if (existing.is_open()) {
+                try {
+                    existing >> j;
+                } catch (const std::exception& e) {
+                    LOG_WARNING("Splitscreen::Save: Failed to parse existing file: {}", e.what());
+                    j = json::object();
+                }
+            }
+        }
 
         j["splitscreen"] = {
             {"b_override", g_Config.b_override},

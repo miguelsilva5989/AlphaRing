@@ -106,7 +106,10 @@ void CGamepadMapping::ResetToDefaults() {
 }
 
 #include <imgui.h>
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 #include "input/Input.h"
@@ -141,155 +144,248 @@ static int DetectPressedButton(int controllerIndex) {
     return -1;
 }
 
-void CGamepadMapping::ImGuiContext() {
-    char buffer[64];
+static bool ContainsInsensitive(const char* text, const char* filter) {
+    if (!filter || !filter[0])
+        return true;
+    if (!text)
+        return false;
+
+    const std::string haystack(text);
+    const std::string needle(filter);
+    return std::search(
+                   haystack.begin(),
+                   haystack.end(),
+                   needle.begin(),
+                   needle.end(),
+                   [](char left, char right) {
+                       return std::tolower(static_cast<unsigned char>(left)) ==
+                              std::tolower(static_cast<unsigned char>(right));
+                   }
+           ) != haystack.end();
+}
+
+static bool ActionInCategory(int action, int category) {
+    if (category == 2)
+        return true;
+    if (category == 0)
+        return action <= 24 || action == 49 || action >= 55;
+    return action >= 25 && action <= 54 && action != 49;
+}
+
+void CGamepadMapping::ImGuiContext(int preferred_controller) {
     bool result = false;
-    static int binding_action = -1;  // Which action is being bound (-1 = none)
-    static int binding_controller = 0;  // Which controller to listen to
-
-    // Controller selector for binding
-    ImGui::PushItemWidth(150);
-    ImGui::Combo("Bind Controller", &binding_controller, "Controller 1\0Controller 2\0Controller 3\0Controller 4\0");
-    ImGui::PopItemWidth();
-    ImGui::Separator();
-
-    // Custom Profile Management
+    static CGamepadMapping* displayed_mapping = nullptr;
+    static CGamepadMapping* binding_mapping = nullptr;
+    static int binding_action = -1;
+    static int binding_controller = 0;
+    static bool binding_waiting_for_release = false;
+    static int action_category = 0;
+    static char action_filter[64] = {};
     static std::vector<std::string> profile_names;
     static int selected_profile = -1;
     static char new_profile_name[64] = "";
     static bool show_save_input = false;
     static bool needs_refresh = true;
 
-    // Refresh profile list when needed
+    if (displayed_mapping != this) {
+        displayed_mapping = this;
+        binding_mapping = nullptr;
+        binding_action = -1;
+        if (preferred_controller >= 0 && preferred_controller < 4)
+            binding_controller = preferred_controller;
+    }
+
     if (needs_refresh) {
         profile_names = MCC::Settings::CustomMapping::GetProfileNames();
         needs_refresh = false;
-        // Reset selection if out of bounds
         if (selected_profile >= (int)profile_names.size()) {
             selected_profile = profile_names.empty() ? -1 : 0;
         }
     }
 
-    ImGui::Text("Custom Profiles:");
-
-    // Profile dropdown
-    ImGui::PushItemWidth(200);
+    ImGui::SeparatorText("Mapping preset");
     const char* preview = (selected_profile >= 0 && selected_profile < (int)profile_names.size())
         ? profile_names[selected_profile].c_str()
-        : "-- Select Profile --";
+        : "Select preset";
 
+    ImGui::SetNextItemWidth(240.0f);
     if (ImGui::BeginCombo("##CustomProfile", preview)) {
         for (int i = 0; i < (int)profile_names.size(); ++i) {
-            bool is_selected = (selected_profile == i);
+            const bool is_selected = selected_profile == i;
             if (ImGui::Selectable(profile_names[i].c_str(), is_selected)) {
                 selected_profile = i;
             }
-            if (is_selected) {
+            if (is_selected)
                 ImGui::SetItemDefaultFocus();
-            }
         }
         ImGui::EndCombo();
     }
-    ImGui::PopItemWidth();
 
     ImGui::SameLine();
-    if (ImGui::Button("Load") && selected_profile >= 0 && selected_profile < (int)profile_names.size()) {
+    ImGui::BeginDisabled(selected_profile < 0 || selected_profile >= (int)profile_names.size());
+    if (ImGui::Button("Load")) {
         if (MCC::Settings::CustomMapping::LoadProfile(profile_names[selected_profile], *this)) {
             result = true;
         }
     }
-
     ImGui::SameLine();
-    if (ImGui::Button("Delete") && selected_profile >= 0 && selected_profile < (int)profile_names.size()) {
+    if (ImGui::Button("Delete")) {
         MCC::Settings::CustomMapping::DeleteProfile(profile_names[selected_profile]);
         needs_refresh = true;
         selected_profile = -1;
     }
+    ImGui::EndDisabled();
 
-    // Save new profile section
     if (!show_save_input) {
-        if (ImGui::Button("Save as New Profile...")) {
+        if (ImGui::Button("Save new preset")) {
             show_save_input = true;
             new_profile_name[0] = '\0';
         }
-
         ImGui::SameLine();
-        if (ImGui::Button("Reset to Defaults")) {
+        if (ImGui::Button("Reset defaults")) {
             ResetToDefaults();
             result = true;
         }
     } else {
-        ImGui::PushItemWidth(200);
-        ImGui::InputText("##NewProfileName", new_profile_name, sizeof(new_profile_name));
-        ImGui::PopItemWidth();
-
+        ImGui::SetNextItemWidth(240.0f);
+        ImGui::InputTextWithHint("##NewProfileName", "Preset name", new_profile_name, sizeof(new_profile_name));
         ImGui::SameLine();
-        if (ImGui::Button("Save") && new_profile_name[0] != '\0') {
+        ImGui::BeginDisabled(new_profile_name[0] == '\0');
+        if (ImGui::Button("Save")) {
             if (MCC::Settings::CustomMapping::SaveProfile(new_profile_name, *this)) {
                 needs_refresh = true;
                 show_save_input = false;
             }
         }
-
+        ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel##SaveCancel")) {
+        if (ImGui::Button("Cancel##SaveMapping")) {
             show_save_input = false;
         }
     }
 
-    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::SeparatorText("Button assignments");
 
-    // Check for button press if binding is active
-    if (binding_action >= 0) {
-        int pressed = DetectPressedButton(binding_controller);
-        if (pressed >= 0) {
-            actions[binding_action] = static_cast<CGamepadMapping::eButton>(pressed);
-            binding_action = -1;
-            result = true;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Listen on");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(210.0f);
+    char controller_preview[48];
+    XINPUT_STATE controller_state {};
+    const bool controller_connected = AlphaRing::Input::GetXInputGetState(binding_controller, &controller_state);
+    std::snprintf(
+            controller_preview,
+            sizeof(controller_preview),
+            "Controller %d - %s",
+            binding_controller + 1,
+            controller_connected ? "connected" : "disconnected"
+    );
+    if (ImGui::BeginCombo("##BindController", controller_preview)) {
+        for (int controller = 0; controller < 4; ++controller) {
+            XINPUT_STATE state {};
+            const bool connected = AlphaRing::Input::GetXInputGetState(controller, &state);
+            char label[48];
+            std::snprintf(label, sizeof(label), "Controller %d - %s", controller + 1, connected ? "connected" : "disconnected");
+            if (ImGui::Selectable(label, binding_controller == controller))
+                binding_controller = controller;
+        }
+        ImGui::EndCombo();
+    }
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150.0f);
+    ImGui::Combo("##ActionCategory", &action_category, "Gameplay\0Editor + Theater\0All actions\0");
+
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##ActionFilter", "Filter actions", action_filter, sizeof(action_filter));
+
+    if (binding_mapping == this && binding_action >= 0) {
+        bool binding_completed = false;
+        if (binding_waiting_for_release) {
+            if (DetectPressedButton(binding_controller) < 0)
+                binding_waiting_for_release = false;
+        } else {
+            const int pressed = DetectPressedButton(binding_controller);
+            if (pressed >= 0) {
+                actions[binding_action] = static_cast<CGamepadMapping::eButton>(pressed);
+                binding_mapping = nullptr;
+                binding_action = -1;
+                result = true;
+                binding_completed = true;
+            }
+        }
+
+        if (!binding_completed) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.12f, 0.06f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.50f, 0.34f, 0.12f, 1.0f));
+            ImGui::BeginChild("MappingBinding", ImVec2(0.0f, 52.0f), true);
+            const char* binding_name = action_names[binding_action] ? action_names[binding_action] : "Unknown action";
+            ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.30f, 1.0f), "%s", binding_name);
+            ImGui::SameLine();
+            ImGui::TextDisabled(binding_waiting_for_release ? "Release controller buttons" : "Press a controller button");
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 62.0f);
+            if (ImGui::SmallButton("Cancel")) {
+                binding_mapping = nullptr;
+                binding_action = -1;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor(2);
         }
     }
 
-    for (int i = 0; i < action_names.size(); ++i) {
-        auto name = action_names.at(i);
-        if (name == nullptr) {
-            snprintf(buffer, sizeof(buffer), "Action %d", i);
-            name = buffer;
-        }
+    const ImGuiTableFlags table_flags = ImGuiTableFlags_BordersInnerH |
+                                        ImGuiTableFlags_RowBg |
+                                        ImGuiTableFlags_ScrollY |
+                                        ImGuiTableFlags_SizingStretchProp;
+    const float table_height = std::max(220.0f, ImGui::GetContentRegionAvail().y);
+    if (ImGui::BeginTable("MappingActions", 3, table_flags, ImVec2(0.0f, table_height))) {
+        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("Button", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 84.0f);
+        ImGui::TableHeadersRow();
 
-        bool is_binding = (binding_action == i);
-
-        if (is_binding) {
-            // Show binding prompt
-            ImGui::Text("%s:", name);
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press button...");
-            ImGui::SameLine();
-            snprintf(buffer, sizeof(buffer), "Cancel##%d", i);
-            if (ImGui::Button(buffer)) {
-                binding_action = -1;
+        for (int action = 0; action < static_cast<int>(action_names.size()); ++action) {
+            char unknown_name[32];
+            const char* name = action_names[action];
+            if (!name) {
+                std::snprintf(unknown_name, sizeof(unknown_name), "Action %d", action);
+                name = unknown_name;
             }
-        } else {
-            // Show current binding with dropdown and bind button
-            ImGui::PushItemWidth(150);
-            // Convert None (-1) to index 16 for dropdown display
-            int value = (actions[i] == CGamepadMapping::None) ? 16 : static_cast<int>(actions[i]);
-            if (ImGui::Combo(name, &value, button_names.data(), button_names.size())) {
-                // Convert index 16 back to None (-1) for storage
-                actions[i] = (value == 16) ? CGamepadMapping::None : static_cast<CGamepadMapping::eButton>(value);
+            if (!ActionInCategory(action, action_category) || !ContainsInsensitive(name, action_filter))
+                continue;
+
+            ImGui::PushID(action);
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(name);
+
+            ImGui::TableSetColumnIndex(1);
+            int value = actions[action] == CGamepadMapping::None ? 16 : static_cast<int>(actions[action]);
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::Combo("##button", &value, button_names.data(), button_names.size())) {
+                actions[action] = value == 16 ? CGamepadMapping::None : static_cast<CGamepadMapping::eButton>(value);
                 result = true;
             }
-            ImGui::PopItemWidth();
 
-            ImGui::SameLine();
-            snprintf(buffer, sizeof(buffer), "Bind##%d", i);
-            if (ImGui::Button(buffer) && binding_action < 0) {
-                binding_action = i;
+            ImGui::TableSetColumnIndex(2);
+            const bool is_binding = binding_mapping == this && binding_action == action;
+            ImGui::BeginDisabled((binding_mapping && !is_binding) || !controller_connected);
+            if (ImGui::Button(is_binding ? "Listening" : "Detect", ImVec2(-1.0f, 0.0f)) && !is_binding) {
+                binding_mapping = this;
+                binding_action = action;
+                binding_waiting_for_release = true;
             }
+            ImGui::EndDisabled();
+            ImGui::PopID();
         }
+        ImGui::EndTable();
     }
 
     if (result) {
-        auto p_engine = GameEngine();
-        if (p_engine) p_engine->load_setting();
+        auto* engine = GameEngine();
+        if (engine)
+            engine->load_setting();
     }
 }

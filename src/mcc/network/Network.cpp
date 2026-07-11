@@ -1,6 +1,8 @@
 #include "Network.h"
 
+#include <algorithm>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <WinSock2.h>
 #include <windows.h>
@@ -203,7 +205,9 @@ namespace MCC::Network {
         }
 
         if (show_network) {
-            if (ImGui::Begin("Request", &show_network, ImGuiWindowFlags_MenuBar))
+            ImGui::SetNextWindowSize(ImVec2(940.0f, 620.0f), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSizeConstraints(ImVec2(680.0f, 420.0f), ImVec2(1600.0f, 1200.0f));
+            if (ImGui::Begin("Network Inspector", &show_network, ImGuiWindowFlags_NoCollapse))
                 RealContext();
             ImGui::End();
         }
@@ -213,17 +217,15 @@ namespace MCC::Network {
     void RealContext() {
         static int index = -1;
 
-        if (ImGui::BeginMenuBar()) {
-            ImGui::MenuItem(b_enable_capture ? "Disable Capture" : "Enable Capture",
-                            nullptr, &b_enable_capture);
-
-            if (ImGui::MenuItem("Clear")) {
-                index = -1;
-                clear();
-            }
-
-            ImGui::EndMenuBar();
+        ImGui::Checkbox("Capture traffic", &b_enable_capture);
+        ImGui::SameLine();
+        if (ImGui::Button("Clear")) {
+            index = -1;
+            clear();
         }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu requests", request_list.size());
+        ImGui::Separator();
 
         if (!request_list.empty()) {
             if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
@@ -238,11 +240,18 @@ namespace MCC::Network {
                     index += 1;
         }
 
-        ImGui::BeginChild("Request List", {ImGui::GetWindowWidth() * 0.4f, 0});
+        const float list_width = std::max(250.0f, ImGui::GetContentRegionAvail().x * 0.34f);
+        ImGui::BeginChild("Request List", {list_width, 0}, true);
+        ImGui::TextDisabled("Requests");
+        ImGui::Separator();
         for (int i = 0; i < request_list.size(); ++i) {
             auto info = request_list[i];
             ImGui::PushID(i);
-            if (ImGui::Selectable(info->url.c_str() + info->url_length, index == i))
+            const size_t offset = std::min(static_cast<size_t>(info->url_length), info->url.size());
+            const char* label = info->url.c_str() + offset;
+            if (!label[0])
+                label = info->url.c_str();
+            if (ImGui::Selectable(label, index == i))
                 index = i;
             ImGui::PopID();
         }
@@ -250,16 +259,36 @@ namespace MCC::Network {
 
         ImGui::SameLine();
 
-        ImGui::BeginChild("Requests Detail");
+        ImGui::BeginChild("Requests Detail", ImVec2(0, 0), true);
 
         if (index >= 0 && index < request_list.size()) {
             auto current_info = request_list[index];
 
-            ImGui::Text("Status [%s] Method: [%s]", current_info->status ? "ON" : "OFF", current_info->method.c_str());
-            ImGui::InputText("url", current_info->url.data(), current_info->url.size(), ImGuiInputTextFlags_ReadOnly);
-            ImGui::InputTextMultiline("headers", current_info->headers.data(), current_info->headers.size(), ImVec2(0, 0), ImGuiInputTextFlags_ReadOnly);
-            ImGui::InputTextMultiline("body", current_info->body.data(), current_info->body.size(), ImVec2(0, 0), ImGuiInputTextFlags_ReadOnly);
-            ImGui::InputTextMultiline("response", current_info->response.data(), current_info->response.size(), ImVec2(0, 0), ImGuiInputTextFlags_ReadOnly);
+            ImGui::Text("%s", current_info->method.c_str());
+            ImGui::SameLine();
+            ImGui::TextColored(
+                    current_info->status ? ImVec4(0.32f, 0.79f, 0.58f, 1.0f) : ImVec4(0.91f, 0.35f, 0.33f, 1.0f),
+                    current_info->status ? "Active" : "Inactive"
+            );
+            ImGui::TextWrapped("%s", current_info->url.c_str());
+            ImGui::Spacing();
+
+            if (ImGui::BeginTabBar("NetworkPayload")) {
+                const auto draw_payload = [](const char* tab, const char* child, const std::string& payload) {
+                    if (ImGui::BeginTabItem(tab)) {
+                        ImGui::BeginChild(child, ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
+                        ImGui::TextUnformatted(payload.data(), payload.data() + payload.size());
+                        ImGui::EndChild();
+                        ImGui::EndTabItem();
+                    }
+                };
+                draw_payload("Headers", "HeadersPayload", current_info->headers);
+                draw_payload("Request body", "RequestPayload", current_info->body);
+                draw_payload("Response", "ResponsePayload", current_info->response);
+                ImGui::EndTabBar();
+            }
+        } else {
+            ImGui::TextDisabled("Select a request");
         }
 
         ImGui::EndChild();

@@ -7,16 +7,40 @@
 #include "common.h"
 #include "offset_mcc.h"
 #include "mcc/CGameManager.h"
+#include "render/d3d11/D3d11.h"
 
 namespace MCC::Module {
     DefDetourFunction(void, __fastcall, module_load, module_info_t* info, int a2, __int64 a3) {
         ppOriginal_module_load(info, a2, a3);
-        GetSubModule(info->title)->load_module(info);
+        LOG_INFO(
+                "MCC module load: title={} handle={:p}",
+                info ? info->title : -1,
+                info ? reinterpret_cast<void*>(info->hModule) : nullptr
+        );
+        if (info) {
+            AlphaRing::Render::D3d11::NotifyMccModuleLoaded(info->title);
+            auto module = GetSubModule(info->title);
+            if (module)
+                module->load_module(info);
+        }
     }
 
     DefDetourFunction(__int64, __fastcall, module_unload, module_info_t* info) {
-        GetSubModule(info->title)->unload_module();
-        return ppOriginal_module_unload(info);
+        const int title = info ? info->title : -1;
+        LOG_INFO(
+                "MCC module unload: title={} handle={:p}",
+                title,
+                info ? reinterpret_cast<void*>(info->hModule) : nullptr
+        );
+        if (info) {
+            auto module = GetSubModule(info->title);
+            if (module)
+                module->unload_module();
+        }
+        const auto result = ppOriginal_module_unload(info);
+        if (title >= 0)
+            AlphaRing::Render::D3d11::NotifyMccModuleUnloaded(title);
+        return result;
     }
 
     bool Initialize() {
@@ -128,22 +152,24 @@ namespace MCC::Module {
         static bool show_engine;
 
         if (ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu("Game")) {
-                ImGui::MenuItem("Engine", nullptr, &show_engine);
-                ImGui::MenuItem("Patch", nullptr, &show_patch);
+            if (ImGui::BeginMenu("Game Tools")) {
+                ImGui::MenuItem("Session controls", nullptr, &show_engine);
+                ImGui::MenuItem("Patches", nullptr, &show_patch);
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
         }
 
         if (show_patch) {
-            if (ImGui::Begin("Patch", &show_patch, ImGuiWindowFlags_MenuBar))
+            ImGui::SetNextWindowSize(ImVec2(680.0f, 560.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Patches", &show_patch, ImGuiWindowFlags_NoCollapse))
                 ContextPatch();
             ImGui::End();
         }
 
         if (show_engine) {
-            if (ImGui::Begin("Engine", &show_engine, 0))
+            ImGui::SetNextWindowSize(ImVec2(560.0f, 540.0f), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Game Session", &show_engine, ImGuiWindowFlags_NoCollapse))
                 ContextEngine();
             ImGui::End();
         }
@@ -153,26 +179,39 @@ namespace MCC::Module {
         auto p_engine = GameEngine();
 
         if (p_engine == nullptr) {
-            ImGui::Text("Engine not created");
+            ImGui::TextDisabled("No active game session");
             return;
         }
 
-        if (ImGui::Button("Load Checkpoint")) p_engine->load_checkpoint();
-        if (ImGui::Button("New Round")) p_engine->new_round();
-        if (ImGui::Button("Pause Game")) p_engine->pause(true);
-        if (ImGui::Button("Resume Game")) p_engine->pause(false);
-        if (ImGui::Button("Restart Game")) p_engine->restart();
-        if (ImGui::Button("Exit Game")) p_engine->exit();
-        if (ImGui::Button("Reload Setting")) p_engine->reload_setting();
-        if (ImGui::Button("Load Setting")) p_engine->load_setting();
+        ImGui::SeparatorText("Session");
+        if (ImGui::Button("Load checkpoint", ImVec2(150.0f, 0.0f))) p_engine->load_checkpoint();
+        ImGui::SameLine();
+        if (ImGui::Button("New round", ImVec2(120.0f, 0.0f))) p_engine->new_round();
+        ImGui::SameLine();
+        if (ImGui::Button("Restart", ImVec2(110.0f, 0.0f))) p_engine->restart();
+
+        if (ImGui::Button("Pause", ImVec2(150.0f, 0.0f))) p_engine->pause(true);
+        ImGui::SameLine();
+        if (ImGui::Button("Resume", ImVec2(120.0f, 0.0f))) p_engine->pause(false);
+
+        if (ImGui::Button("Reload settings", ImVec2(150.0f, 0.0f))) p_engine->reload_setting();
+        ImGui::SameLine();
+        if (ImGui::Button("Apply settings", ImVec2(120.0f, 0.0f))) p_engine->load_setting();
+
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.18f, 0.17f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.58f, 0.22f, 0.20f, 1.0f));
+        if (ImGui::Button("Exit session", ImVec2(110.0f, 0.0f))) p_engine->exit();
+        ImGui::PopStyleColor(2);
 
 #pragma region HaloScript
         static char halo_script[1024] = {0};
 
-        if (ImGui::InputTextMultiline("HaloScript", halo_script + 4, sizeof(halo_script) - 4))
+        ImGui::SeparatorText("HaloScript");
+        if (ImGui::InputTextMultiline("##HaloScript", halo_script + 4, sizeof(halo_script) - 4, ImVec2(-1.0f, 120.0f)))
             halo_script[1023] = '\0';
 
-        if (ImGui::Button("Execute HaloScript")) {
+        if (ImGui::Button("Execute command")) {
             halo_script[0] = 'H';
             halo_script[1] = 'S';
             halo_script[2] = ':';
@@ -182,14 +221,15 @@ namespace MCC::Module {
         }
 #pragma endregion
 
-        ImGui::Separator();
-
 #pragma region ChangeTeam
+        ImGui::SeparatorText("Player team");
         static int player = 0;
         static int team = 0;
-        ImGui::Combo("Player", &player, "Player 0\0Player 1\0Player 2\0Player 3");
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::Combo("Player", &player, "Player 1\0Player 2\0Player 3\0Player 4");
+        ImGui::SetNextItemWidth(160.0f);
         ImGui::Combo("Team", &team, "Red\0Blue\0Green\0Orange\0Purple\0Gold\0Brown\0Pink");
-        if (ImGui::Button("Change Team")) {
+        if (ImGui::Button("Apply team")) {
             auto xuid = CGameManager::get_xuid(player);
             if (xuid != 0) p_engine->change_team(xuid, team);
         }
@@ -209,11 +249,8 @@ namespace MCC::Module {
                 ImGui::SetTooltip("%s", patch->desc());
         };
 
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::MenuItem("Reload Patch")) ReloadPatch();
-
-            ImGui::EndMenuBar();
-        }
+        if (ImGui::Button("Reload patches")) ReloadPatch();
+        ImGui::Spacing();
 
         if (!ImGui::BeginTabBar("patch")) return;
 
@@ -223,11 +260,11 @@ namespace MCC::Module {
             auto p_patches = GetSubModule((eModule)i)->patches();
 
             if (ImGui::BeginTabItem(cModuleName[i])) {
-                ImGui::Text("Embed Patches");
+                ImGui::SeparatorText("Built-in patches");
                 for (auto patch : p_patches->embed_patches())
                     p_print(patch);
 
-                ImGui::Text("Patches");
+                ImGui::SeparatorText("Loaded patches");
                 for (auto patch : p_patches->patches())
                     p_print(patch);
 

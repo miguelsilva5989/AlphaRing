@@ -5,21 +5,20 @@
 
 #include "imgui.h"
 #include <cstdio>
+#include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
 void CUserProfile::ImGuiContext() {
     bool result = false;
     char buffer[1024];
-
-    // Custom Profile Presets
     static std::vector<std::string> profile_names;
     static int selected_profile = -1;
     static char new_profile_name[64] = "";
     static bool show_save_input = false;
     static bool needs_refresh = true;
 
-    // Refresh profile list when needed
     if (needs_refresh) {
         profile_names = MCC::Settings::CustomProfile::GetProfileNames();
         needs_refresh = false;
@@ -28,260 +27,315 @@ void CUserProfile::ImGuiContext() {
         }
     }
 
-    ImGui::Text("Profile Presets:");
-
-    // Profile dropdown
-    ImGui::PushItemWidth(200);
+    ImGui::SeparatorText("Profile preset");
     const char* preview = (selected_profile >= 0 && selected_profile < (int)profile_names.size())
         ? profile_names[selected_profile].c_str()
-        : "-- Select Preset --";
+        : "Select preset";
 
+    ImGui::SetNextItemWidth(240.0f);
     if (ImGui::BeginCombo("##ProfilePreset", preview)) {
         for (int i = 0; i < (int)profile_names.size(); ++i) {
-            bool is_selected = (selected_profile == i);
+            const bool is_selected = selected_profile == i;
             if (ImGui::Selectable(profile_names[i].c_str(), is_selected)) {
                 selected_profile = i;
             }
-            if (is_selected) {
+            if (is_selected)
                 ImGui::SetItemDefaultFocus();
-            }
         }
         ImGui::EndCombo();
     }
-    ImGui::PopItemWidth();
 
     ImGui::SameLine();
-    if (ImGui::Button("Load##ProfilePreset") && selected_profile >= 0 && selected_profile < (int)profile_names.size()) {
+    ImGui::BeginDisabled(selected_profile < 0 || selected_profile >= (int)profile_names.size());
+    if (ImGui::Button("Load##ProfilePreset")) {
         if (MCC::Settings::CustomProfile::LoadProfile(profile_names[selected_profile], *this)) {
             result = true;
         }
     }
-
     ImGui::SameLine();
-    if (ImGui::Button("Delete##ProfilePreset") && selected_profile >= 0 && selected_profile < (int)profile_names.size()) {
+    if (ImGui::Button("Delete##ProfilePreset")) {
         MCC::Settings::CustomProfile::DeleteProfile(profile_names[selected_profile]);
         needs_refresh = true;
         selected_profile = -1;
     }
+    ImGui::EndDisabled();
 
-    // Save new preset section
     if (!show_save_input) {
-        if (ImGui::Button("Save as New Preset...")) {
+        if (ImGui::Button("Save new preset")) {
             show_save_input = true;
             new_profile_name[0] = '\0';
         }
     } else {
-        ImGui::PushItemWidth(200);
-        ImGui::InputText("##NewPresetName", new_profile_name, sizeof(new_profile_name));
-        ImGui::PopItemWidth();
-
+        ImGui::SetNextItemWidth(240.0f);
+        ImGui::InputTextWithHint("##NewPresetName", "Preset name", new_profile_name, sizeof(new_profile_name));
         ImGui::SameLine();
-        if (ImGui::Button("Save##PresetSave") && new_profile_name[0] != '\0') {
+        ImGui::BeginDisabled(new_profile_name[0] == '\0');
+        if (ImGui::Button("Save##PresetSave")) {
             if (MCC::Settings::CustomProfile::SaveProfile(new_profile_name, *this)) {
                 needs_refresh = true;
                 show_save_input = false;
             }
         }
-
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancel##PresetCancel")) {
             show_save_input = false;
         }
     }
 
-    ImGui::Separator();
+    ImGui::Spacing();
+    if (!ImGui::BeginTabBar("ProfileOptionsTabs"))
+        return;
 
-    sprintf(buffer, "%ls", ServiceTag);
-    if (ImGui::InputText("ServiceTag", buffer, 5, ImGuiInputTextFlags_CallbackCompletion)) {
-        for (int i = 0; i < 4; ++i) {
-            if (buffer[i] == 0) break;
-            ServiceTag[i] = buffer[i];
-        }
-        result = true;
-    }
-
-    result |= ImGui::Checkbox("SubtitleSetting", &SubtitleSetting);
-    result |= ImGui::Checkbox("SubtitleSizeSetting", &SubtitleSizeSetting);
-    result |= ImGui::Checkbox("SubtitleBackgroundSetting", &SubtitleBackgroundSetting);
-    result |= ImGui::Checkbox("SubtitleShadowColorSetting", &SubtitleShadowColorSetting);
-    result |= ImGui::Checkbox("DialogueColorStyleSetting", &DialogueColorStyleSetting);
-    result |= ImGui::Checkbox("DialogueColorSetting", &DialogueColorSetting);
-    result |= ImGui::Checkbox("DialoguePaletteSetting", &DialoguePaletteSetting);
-    result |= ImGui::Checkbox("SpeakerSetting", &SpeakerSetting);
-    result |= ImGui::Checkbox("SpeakerColorStyleSetting", &SpeakerColorStyleSetting);
-    result |= ImGui::Checkbox("SpeakerColorSetting", &SpeakerColorSetting);
-    result |= ImGui::Checkbox("SpeakerPaletteSetting", &SpeakerPaletteSetting);
-    result |= ImGui::Checkbox("SubtitleFontSetting", &SubtitleFontSetting);
-    result |= ImGui::InputFloat("SubtitleBackgroundOpacitySetting", &SubtitleBackgroundOpacitySetting);
-    result |= ImGui::InputFloat("SubtitleShadowOpacitySetting", &SubtitleShadowOpacitySetting);
-    result |= ImGui::InputInt("FOVSetting", &FOVSetting);
-    result |= ImGui::InputInt("VehicleFOVSetting", &VehicleFOVSetting);
-    result |= ImGui::Checkbox("CrosshairLocation", &CrosshairLocation);
-    result |= ImGui::Checkbox("LookControlsInverted", &LookControlsInverted);
-    result |= ImGui::Checkbox("MouseLookControlsInverted", &MouseLookControlsInverted);
-    result |= ImGui::Checkbox("VibrationDisabled", &VibrationDisabled);
-    result |= ImGui::Checkbox("ImpulseTriggersDisabled", &ImpulseTriggersDisabled);
-    result |= ImGui::Checkbox("AircraftControlsInverted", &AircraftControlsInverted);
-    result |= ImGui::Checkbox("MouseAircraftControlsInverted", &MouseAircraftControlsInverted);
-    result |= ImGui::Checkbox("AutoCenterEnabled", &AutoCenterEnabled);
-    result |= ImGui::Checkbox("CrouchLockEnabled", &CrouchLockEnabled);
-    result |= ImGui::Checkbox("MKCrouchLockEnabled", &MKCrouchLockEnabled);
-    result |= ImGui::Checkbox("ClenchProtectionEnabled", &ClenchProtectionEnabled);
-    result |= ImGui::Checkbox("UseFemaleVoice", &UseFemaleVoice);
-    result |= ImGui::InputInt("HoldToZoom", &HoldToZoom);
-    result |= ImGui::InputInt("PlayerModelPrimaryColorIndex", &PlayerModelPrimaryColorIndex);
-    result |= ImGui::InputInt("PlayerModelSecondaryColorIndex", &PlayerModelSecondaryColorIndex);
-    result |= ImGui::InputInt("PlayerModelTertiaryColorIndex", &PlayerModelTertiaryColorIndex);
-
-    result |= ImGui::Checkbox("UseEliteModel", &UseEliteModel);
-    result |= ImGui::Checkbox("LockMaxAspectRatio", &LockMaxAspectRatio);
-    result |= ImGui::Checkbox("UsersSkinsEnabled", &UsersSkinsEnabled);
-    result |= ImGui::InputInt("PlayerModelPermutation", &PlayerModelPermutation);
-
-    auto getter = [] (void* data, int index) -> const char* {return CUserProfile::CustomizationItemName(index);};
-#define CustomizationItem(label) result |= ImGui::Combo(#label, &label, getter, nullptr, 2131)
-
-    CustomizationItem(HelmetIndex);
-    CustomizationItem(LeftShoulderIndex);
-    CustomizationItem(RightShoulderIndex);
-    CustomizationItem(ChestIndex);
-    CustomizationItem(WristIndex);
-    CustomizationItem(UtilityIndex);
-    CustomizationItem(ArmsIndex);
-    CustomizationItem(LegsIndex);
-    CustomizationItem(BackpackIndex);
-    CustomizationItem(SpartanBodyIndex);
-    CustomizationItem(SpartanArmorEffectIndex);
-    CustomizationItem(KneesIndex);
-    CustomizationItem(VisorColorIndex);
-    CustomizationItem(EliteHelmetIndex);
-    CustomizationItem(EliteLeftShoulderIndex);
-    CustomizationItem(EliteRightShoulderIndex);
-    CustomizationItem(EliteChestIndex);
-    CustomizationItem(EliteArmsIndex);
-    CustomizationItem(EliteLegsIndex);
-    CustomizationItem(EliteArmorIndex);
-    CustomizationItem(EliteArmorEffectIndex);
-    CustomizationItem(VoiceIndex);
-    CustomizationItem(PlayerModelPrimaryColor);
-    CustomizationItem(PlayerModelSecondaryColor);
-    CustomizationItem(PlayerModelTertiaryColor);
-    CustomizationItem(SpartanPose);
-    CustomizationItem(ElitePose);
-
-    if (ImGui::CollapsingHeader("Skins")) {
-        if (ImGui::Button("Reset")) {
-            memset(Skins, -1, sizeof(Skins));
+    if (ImGui::BeginTabItem("Gameplay")) {
+        ImGui::SeparatorText("Identity and view");
+        std::snprintf(buffer, sizeof(buffer), "%ls", ServiceTag);
+        ImGui::SetNextItemWidth(100.0f);
+        if (ImGui::InputText("Service tag", buffer, 5)) {
+            std::wmemset(ServiceTag, 0, 4);
+            for (int i = 0; i < 4 && buffer[i]; ++i)
+                ServiceTag[i] = static_cast<unsigned char>(buffer[i]);
             result = true;
         }
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Field of view", &FOVSetting);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Vehicle field of view", &VehicleFOVSetting);
+        result |= ImGui::Checkbox("Centered crosshair", &CrosshairLocation);
 
-        for (int i = 0; i < 32; ++i) {
-            sprintf(buffer, "Skin %d", i);
-            if (ImGui::TreeNode(buffer)) {
-                result |= ImGui::InputInt("Object", &Skins[i].object);
-                result |= ImGui::Combo("Skin", &Skins[i].skin, getter, nullptr, 2131);
-                ImGui::TreePop();
+        ImGui::SeparatorText("Look and movement");
+        result |= ImGui::Checkbox("Invert controller look", &LookControlsInverted);
+        result |= ImGui::Checkbox("Invert mouse look", &MouseLookControlsInverted);
+        result |= ImGui::Checkbox("Invert aircraft controls", &AircraftControlsInverted);
+        result |= ImGui::Checkbox("Invert mouse aircraft controls", &MouseAircraftControlsInverted);
+        result |= ImGui::Checkbox("Auto center", &AutoCenterEnabled);
+        result |= ImGui::Checkbox("Controller crouch lock", &CrouchLockEnabled);
+        result |= ImGui::Checkbox("Keyboard crouch lock", &MKCrouchLockEnabled);
+        result |= ImGui::Checkbox("Modern aim control", &UseModernAimControl);
+        result |= ImGui::Checkbox("Swap triggers and bumpers", &SwapTriggersAndBumpers);
+        result |= ImGui::Checkbox("Disable vibration", &VibrationDisabled);
+        result |= ImGui::Checkbox("Disable impulse triggers", &ImpulseTriggersDisabled);
+
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Mouse sensitivity", &MouseSensitivity, 0.1f, 1.0f, "%.2f");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Look axial dead zone", &LookAxialDeadZone, 0.01f, 0.1f, "%.3f");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Look radial dead zone", &LookRadialDeadZone, 0.01f, 0.1f, "%.3f");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Zoom sensitivity", &ZoomLookSensitivityMultiplier, 0.05f, 0.25f, "%.2f");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Vehicle sensitivity", &VehicleLookSensitivityMultiplier, 0.05f, 0.25f, "%.2f");
+        result |= ImGui::Checkbox("Mouse smoothing", &MouseSmoothing);
+        result |= ImGui::Checkbox("Mouse acceleration", &MouseAcceleration);
+        ImGui::EndTabItem();
+    }
+
+    if (ImGui::BeginTabItem("HUD + Audio")) {
+        ImGui::SeparatorText("Subtitles");
+        result |= ImGui::Checkbox("Subtitles", &SubtitleSetting);
+        result |= ImGui::Checkbox("Large subtitles", &SubtitleSizeSetting);
+        result |= ImGui::Checkbox("Subtitle background", &SubtitleBackgroundSetting);
+        result |= ImGui::Checkbox("Subtitle shadow color", &SubtitleShadowColorSetting);
+        result |= ImGui::Checkbox("Dialogue color style", &DialogueColorStyleSetting);
+        result |= ImGui::Checkbox("Dialogue color", &DialogueColorSetting);
+        result |= ImGui::Checkbox("Dialogue palette", &DialoguePaletteSetting);
+        result |= ImGui::Checkbox("Speaker labels", &SpeakerSetting);
+        result |= ImGui::Checkbox("Speaker color style", &SpeakerColorStyleSetting);
+        result |= ImGui::Checkbox("Speaker color", &SpeakerColorSetting);
+        result |= ImGui::Checkbox("Speaker palette", &SpeakerPaletteSetting);
+        result |= ImGui::Checkbox("Alternate subtitle font", &SubtitleFontSetting);
+        ImGui::SetNextItemWidth(220.0f);
+        result |= ImGui::SliderFloat("Background opacity", &SubtitleBackgroundOpacitySetting, 0.0f, 1.0f, "%.2f");
+        ImGui::SetNextItemWidth(220.0f);
+        result |= ImGui::SliderFloat("Shadow opacity", &SubtitleShadowOpacitySetting, 0.0f, 1.0f, "%.2f");
+
+        ImGui::SeparatorText("Audio");
+        ImGui::SetNextItemWidth(240.0f);
+        result |= ImGui::SliderFloat("Master volume", &MasterVolume, 0.0f, 1.0f, "%.2f");
+        ImGui::SetNextItemWidth(240.0f);
+        result |= ImGui::SliderFloat("Music volume", &MusicVolume, 0.0f, 1.0f, "%.2f");
+        ImGui::SetNextItemWidth(240.0f);
+        result |= ImGui::SliderFloat("Effects volume", &SfxVolume, 0.0f, 1.0f, "%.2f");
+
+        ImGui::SeparatorText("HUD and display");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Brightness", &Brightness, 0.05f, 0.25f, "%.2f");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("HUD scale", &HUDScale, 0.05f, 0.25f, "%.2f");
+        int hud_scale = PixelPerfectHudScale;
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputInt("Pixel-perfect HUD scale", &hud_scale) && hud_scale >= 0 && hud_scale <= 0xFFFF) {
+            PixelPerfectHudScale = static_cast<__int16>(hud_scale);
+            result = true;
+        }
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Remastered HUD mode", &RemasteredHUDSetting);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Color-blind mode", &ColorBlindMode);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Color-blind strength", &ColorBlindStrength);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Color-blind brightness", &ColorBlindBrightness);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Color-blind contrast", &ColorBlindContrast);
+        ImGui::EndTabItem();
+    }
+
+    if (ImGui::BeginTabItem("Appearance")) {
+        ImGui::SeparatorText("Player model");
+        result |= ImGui::Checkbox("Use Elite model", &UseEliteModel);
+        result |= ImGui::Checkbox("Enable user skins", &UsersSkinsEnabled);
+        result |= ImGui::Checkbox("Female voice", &UseFemaleVoice);
+        result |= ImGui::Checkbox("Lock maximum aspect ratio", &LockMaxAspectRatio);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Model permutation", &PlayerModelPermutation);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Primary color index", &PlayerModelPrimaryColorIndex);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Secondary color index", &PlayerModelSecondaryColorIndex);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Tertiary color index", &PlayerModelTertiaryColorIndex);
+
+        ImGui::SeparatorText("Customization");
+        auto getter = [] (void*, int index) -> const char* { return CUserProfile::CustomizationItemName(index); };
+#define CUSTOMIZATION_ITEM(field, label) \
+        ImGui::SetNextItemWidth(320.0f); \
+        result |= ImGui::Combo(label, &field, getter, nullptr, 2131)
+        CUSTOMIZATION_ITEM(HelmetIndex, "Helmet");
+        CUSTOMIZATION_ITEM(LeftShoulderIndex, "Left shoulder");
+        CUSTOMIZATION_ITEM(RightShoulderIndex, "Right shoulder");
+        CUSTOMIZATION_ITEM(ChestIndex, "Chest");
+        CUSTOMIZATION_ITEM(WristIndex, "Wrist");
+        CUSTOMIZATION_ITEM(UtilityIndex, "Utility");
+        CUSTOMIZATION_ITEM(ArmsIndex, "Arms");
+        CUSTOMIZATION_ITEM(LegsIndex, "Legs");
+        CUSTOMIZATION_ITEM(BackpackIndex, "Backpack");
+        CUSTOMIZATION_ITEM(SpartanBodyIndex, "Spartan body");
+        CUSTOMIZATION_ITEM(SpartanArmorEffectIndex, "Spartan armor effect");
+        CUSTOMIZATION_ITEM(KneesIndex, "Knees");
+        CUSTOMIZATION_ITEM(VisorColorIndex, "Visor color");
+        CUSTOMIZATION_ITEM(EliteHelmetIndex, "Elite helmet");
+        CUSTOMIZATION_ITEM(EliteLeftShoulderIndex, "Elite left shoulder");
+        CUSTOMIZATION_ITEM(EliteRightShoulderIndex, "Elite right shoulder");
+        CUSTOMIZATION_ITEM(EliteChestIndex, "Elite chest");
+        CUSTOMIZATION_ITEM(EliteArmsIndex, "Elite arms");
+        CUSTOMIZATION_ITEM(EliteLegsIndex, "Elite legs");
+        CUSTOMIZATION_ITEM(EliteArmorIndex, "Elite armor");
+        CUSTOMIZATION_ITEM(EliteArmorEffectIndex, "Elite armor effect");
+        CUSTOMIZATION_ITEM(VoiceIndex, "Voice");
+        CUSTOMIZATION_ITEM(PlayerModelPrimaryColor, "Primary color");
+        CUSTOMIZATION_ITEM(PlayerModelSecondaryColor, "Secondary color");
+        CUSTOMIZATION_ITEM(PlayerModelTertiaryColor, "Tertiary color");
+        CUSTOMIZATION_ITEM(SpartanPose, "Spartan pose");
+        CUSTOMIZATION_ITEM(ElitePose, "Elite pose");
+#undef CUSTOMIZATION_ITEM
+
+        if (ImGui::CollapsingHeader("Weapon skins")) {
+            if (ImGui::Button("Reset skins")) {
+                std::memset(Skins, -1, sizeof(Skins));
+                result = true;
+            }
+            for (int i = 0; i < 32; ++i) {
+                ImGui::PushID(i);
+                std::snprintf(buffer, sizeof(buffer), "Skin slot %d", i + 1);
+                if (ImGui::TreeNode(buffer)) {
+                    result |= ImGui::InputInt("Object", &Skins[i].object);
+                    ImGui::SetNextItemWidth(320.0f);
+                    result |= ImGui::Combo("Skin", &Skins[i].skin, getter, nullptr, 2131);
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
             }
         }
+        ImGui::EndTabItem();
     }
 
-    result |= ImGui::Checkbox("OnlineMedalFlasher", &OnlineMedalFlasher);
-    result |= ImGui::Checkbox("VerticalLookSensitivity", &VerticalLookSensitivity);
-    result |= ImGui::Checkbox("HorizontalLookSensitivity", &HorizontalLookSensitivity);
-    result |= ImGui::Checkbox("LookAcceleration", &LookAcceleration);
-    result |= ImGui::InputFloat("LookAxialDeadZone", &LookAxialDeadZone);
-    result |= ImGui::InputFloat("LookRadialDeadZone", &LookRadialDeadZone);
-    result |= ImGui::InputFloat("ZoomLookSensitivityMultiplier", &ZoomLookSensitivityMultiplier);
-    result |= ImGui::InputFloat("VehicleLookSensitivityMultiplier", &VehicleLookSensitivityMultiplier);
-    result |= ImGui::Checkbox("ButtonPreset", &ButtonPreset);
-    result |= ImGui::Checkbox("StickPreset", &StickPreset);
-    result |= ImGui::Checkbox("LeftyToggle", &LeftyToggle);
-    result |= ImGui::Checkbox("FlyingCameraTurnSensitivity", &FlyingCameraTurnSensitivity);
-    result |= ImGui::Checkbox("FlyingCameraPanning", &FlyingCameraPanning);
-    result |= ImGui::Checkbox("FlyingCameraSpeed", &FlyingCameraSpeed);
-    result |= ImGui::Checkbox("FlyingCameraThrust", &FlyingCameraThrust);
-    result |= ImGui::Checkbox("TheaterTurnSensitivity", &TheaterTurnSensitivity);
-    result |= ImGui::Checkbox("TheaterPanning", &TheaterPanning);
-    result |= ImGui::Checkbox("TheaterSpeed", &TheaterSpeed);
-    result |= ImGui::Checkbox("TheaterThrust", &TheaterThrust);
-    result |= ImGui::Checkbox("MKTheaterTurnSensitivity", &MKTheaterTurnSensitivity);
-    result |= ImGui::Checkbox("MKTheaterPanning", &MKTheaterPanning);
-    result |= ImGui::Checkbox("MKTheaterSpeed", &MKTheaterSpeed);
-    result |= ImGui::Checkbox("MKTheaterThrust", &MKTheaterThrust);
-    result |= ImGui::Checkbox("SwapTriggersAndBumpers", &SwapTriggersAndBumpers);
-    result |= ImGui::Checkbox("UseModernAimControl", &UseModernAimControl);
-    result |= ImGui::Checkbox("UseDoublePressJumpToJetpack", &UseDoublePressJumpToJetpack);
-    result |= ImGui::Checkbox("DualWieldInverted", &DualWieldInverted);
-    result |= ImGui::Checkbox("ControllerDualWieldInverted", &ControllerDualWieldInverted);
-    result |= ImGui::Checkbox("ControllerHornetControlJoystick", &ControllerHornetControlJoystick);
-    result |= ImGui::Checkbox("ControllerBansheeTrickButtonsSwapped", &ControllerBansheeTrickButtonsSwapped);
-    result |= ImGui::Checkbox("ColorCorrection", &ColorCorrection);
-    result |= ImGui::Checkbox("EnemyPlayerNameColor", &EnemyPlayerNameColor);
-    result |= ImGui::InputInt("GameEngineTimer", &GameEngineTimer);
+    if (ImGui::BeginTabItem("Advanced")) {
+        ImGui::SeparatorText("Input flags");
+        result |= ImGui::Checkbox("Clench protection", &ClenchProtectionEnabled);
+        result |= ImGui::Checkbox("Online medal flasher", &OnlineMedalFlasher);
+        result |= ImGui::Checkbox("Vertical look sensitivity flag", &VerticalLookSensitivity);
+        result |= ImGui::Checkbox("Horizontal look sensitivity flag", &HorizontalLookSensitivity);
+        result |= ImGui::Checkbox("Look acceleration flag", &LookAcceleration);
+        result |= ImGui::Checkbox("Button preset flag", &ButtonPreset);
+        result |= ImGui::Checkbox("Stick preset flag", &StickPreset);
+        result |= ImGui::Checkbox("Left-handed controls", &LeftyToggle);
+        result |= ImGui::Checkbox("Double-press jump for jetpack", &UseDoublePressJumpToJetpack);
+        result |= ImGui::Checkbox("Dual-wield inverted", &DualWieldInverted);
+        result |= ImGui::Checkbox("Controller dual-wield inverted", &ControllerDualWieldInverted);
+        result |= ImGui::Checkbox("Hornet joystick controls", &ControllerHornetControlJoystick);
+        result |= ImGui::Checkbox("Swap Banshee trick buttons", &ControllerBansheeTrickButtonsSwapped);
+        result |= ImGui::Checkbox("Color correction", &ColorCorrection);
+        result |= ImGui::Checkbox("Enemy player-name color", &EnemyPlayerNameColor);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Hold-to-zoom mode", &HoldToZoom);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Keyboard/mouse preset", &KeyboardMouseButtonPreset);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputInt("Game engine timer", &GameEngineTimer);
 
-    // LoadoutSlots
-    if (ImGui::CollapsingHeader("LoadoutSlots")) {
-        for (int i = 0; i < 5; ++i) {
-            sprintf(buffer, "LoadoutSlot %d", i);
-            if (ImGui::TreeNode(buffer)) {
-                result |= ImGui::InputInt("TacticalPackageIndex", &LoadoutSlots[i].TacticalPackageIndex);
-                result |= ImGui::InputInt("SupportUpgradeIndex", &LoadoutSlots[i].SupportUpgradeIndex);
-                result |= ImGui::InputInt("PrimaryWeaponIndex", &LoadoutSlots[i].PrimaryWeaponIndex);
-                result |= ImGui::InputInt("SecondaryWeaponIndex", &LoadoutSlots[i].SecondaryWeaponIndex);
-                result |= ImGui::InputInt("PrimaryWeaponVariantIndex", &LoadoutSlots[i].PrimaryWeaponVariantIndex);
-                result |= ImGui::InputInt("SecondaryWeaponVariantIndex", &LoadoutSlots[i].SecondaryWeaponVariantIndex);
-                result |= ImGui::InputInt("EquipmentIndex", &LoadoutSlots[i].EquipmentIndex);
-                result |= ImGui::InputInt("GrenadeIndex", &LoadoutSlots[i].GrenadeIndex);
-                // Name is ignored as it's a wchar_t array
-                ImGui::TreePop();
+        ImGui::SeparatorText("Mouse acceleration");
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Minimum rate", &MouseAccelerationMinRate);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Maximum acceleration", &MouseAccelerationMaxAccel);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Scale", &MouseAccelerationScale);
+        ImGui::SetNextItemWidth(180.0f);
+        result |= ImGui::InputFloat("Exponent", &MouseAccelerationExp);
+
+        if (ImGui::CollapsingHeader("Theater and free camera")) {
+            result |= ImGui::Checkbox("Flying camera turn sensitivity", &FlyingCameraTurnSensitivity);
+            result |= ImGui::Checkbox("Flying camera panning", &FlyingCameraPanning);
+            result |= ImGui::Checkbox("Flying camera speed", &FlyingCameraSpeed);
+            result |= ImGui::Checkbox("Flying camera thrust", &FlyingCameraThrust);
+            result |= ImGui::Checkbox("Theater turn sensitivity", &TheaterTurnSensitivity);
+            result |= ImGui::Checkbox("Theater panning", &TheaterPanning);
+            result |= ImGui::Checkbox("Theater speed", &TheaterSpeed);
+            result |= ImGui::Checkbox("Theater thrust", &TheaterThrust);
+            result |= ImGui::Checkbox("Keyboard theater turn sensitivity", &MKTheaterTurnSensitivity);
+            result |= ImGui::Checkbox("Keyboard theater panning", &MKTheaterPanning);
+            result |= ImGui::Checkbox("Keyboard theater speed", &MKTheaterSpeed);
+            result |= ImGui::Checkbox("Keyboard theater thrust", &MKTheaterThrust);
+        }
+
+        if (ImGui::CollapsingHeader("Loadouts")) {
+            for (int i = 0; i < 5; ++i) {
+                ImGui::PushID(i);
+                std::snprintf(buffer, sizeof(buffer), "Loadout %d", i + 1);
+                if (ImGui::TreeNode(buffer)) {
+                    result |= ImGui::InputInt("Tactical package", &LoadoutSlots[i].TacticalPackageIndex);
+                    result |= ImGui::InputInt("Support upgrade", &LoadoutSlots[i].SupportUpgradeIndex);
+                    result |= ImGui::InputInt("Primary weapon", &LoadoutSlots[i].PrimaryWeaponIndex);
+                    result |= ImGui::InputInt("Secondary weapon", &LoadoutSlots[i].SecondaryWeaponIndex);
+                    result |= ImGui::InputInt("Primary variant", &LoadoutSlots[i].PrimaryWeaponVariantIndex);
+                    result |= ImGui::InputInt("Secondary variant", &LoadoutSlots[i].SecondaryWeaponVariantIndex);
+                    result |= ImGui::InputInt("Equipment", &LoadoutSlots[i].EquipmentIndex);
+                    result |= ImGui::InputInt("Grenade", &LoadoutSlots[i].GrenadeIndex);
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
             }
         }
-    }
 
-    // CustomKeyboardMouseMappingV2 is ignored as it's used only for player0
-
-    result |= ImGui::InputFloat("MouseSensitivity", &MouseSensitivity);
-    result |= ImGui::Checkbox("MouseSmoothing", &MouseSmoothing);
-    result |= ImGui::Checkbox("MouseAcceleration", &MouseAcceleration);
-
-    int tmp = PixelPerfectHudScale;
-    if (ImGui::InputInt("PixelPerfectHudScale", &tmp) && tmp >= 0 && tmp <= 0xFFFF) {
-        PixelPerfectHudScale = static_cast<__int16>(tmp);
-        result = true;
-    }
-
-    result |= ImGui::InputFloat("MouseAccelerationMinRate", &MouseAccelerationMinRate);
-    result |= ImGui::InputFloat("MouseAccelerationMaxAccel", &MouseAccelerationMaxAccel);
-    result |= ImGui::InputFloat("MouseAccelerationScale", &MouseAccelerationScale);
-    result |= ImGui::InputFloat("MouseAccelerationExp", &MouseAccelerationExp);
-    result |= ImGui::InputInt("KeyboardMouseButtonPreset", &KeyboardMouseButtonPreset);
-
-    result |= ImGui::InputFloat("MasterVolume", &MasterVolume);
-    result |= ImGui::InputFloat("MusicVolume", &MusicVolume);
-    result |= ImGui::InputFloat("SfxVolume", &SfxVolume);
-    result |= ImGui::InputFloat("Brightness", &Brightness);
-
-    // WeaponDisplayOffset
-    if (ImGui::CollapsingHeader("WeaponDisplayOffset")) {
-        for (int i = 0; i < 5; ++i) {
-            sprintf(buffer, "WeaponDisplayOffset %d", i);
-            if (ImGui::TreeNode(buffer)) {
-                result |= ImGui::InputFloat3("Offset", &WeaponDisplayOffset[i].x);
-                ImGui::TreePop();
+        if (ImGui::CollapsingHeader("Weapon display offsets")) {
+            for (int i = 0; i < 5; ++i) {
+                ImGui::PushID(i);
+                std::snprintf(buffer, sizeof(buffer), "Game %d", i + 1);
+                result |= ImGui::InputFloat3(buffer, &WeaponDisplayOffset[i].x);
+                ImGui::PopID();
             }
         }
+        ImGui::EndTabItem();
     }
 
-    result |= ImGui::InputInt("ColorBlindMode", &ColorBlindMode);
-    result |= ImGui::InputInt("ColorBlindStrength", &ColorBlindStrength);
-    result |= ImGui::InputInt("ColorBlindBrightness", &ColorBlindBrightness);
-    result |= ImGui::InputInt("ColorBlindContrast", &ColorBlindContrast);
-    result |= ImGui::InputInt("RemasteredHUDSetting", &RemasteredHUDSetting);
-    result |= ImGui::InputFloat("HUDScale", &HUDScale);
+    ImGui::EndTabBar();
 
     if (result) {
-        auto p_engine = GameEngine();
-        if (p_engine) p_engine->load_setting();
+        auto* engine = GameEngine();
+        if (engine)
+            engine->load_setting();
     }
 }
 

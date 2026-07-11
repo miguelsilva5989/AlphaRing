@@ -1,141 +1,226 @@
-# AlphaRing - kirklandsig Fork
+# AlphaRing - Proton and Dual-Monitor Fork
 
-> **This is a personal fork of [thejackbitt/AlphaRing](https://github.com/thejackbitt/AlphaRing) for testing and development.**
->
-> **Based on:** JackBitt's AlphaRing v1.2.1 (commit `bdad7eb`)
->
-> For the original project, see [WinterSquire/AlphaRing](https://github.com/WinterSquire/AlphaRing)
+AlphaRing is an experimental modding and local split-screen tool for the Steam version of Halo: The Master Chief Collection. This fork focuses on Proton compatibility, reliable player input assignment, a clearer in-game interface, and an experimental two-monitor output mode for Halo: Combat Evolved.
 
----
+> This is an improvement fork, not a new original project. AlphaRing was created by [WinterSquire](https://github.com/WinterSquire/AlphaRing), with important work inherited through the [thejackbitt fork](https://github.com/thejackbitt/AlphaRing) and [kirklandsig fork](https://github.com/kirklandsig/AlphaRing). See [Credits](#project-lineage-and-credits) for the full lineage.
 
-## What's New in This Fork
+## Status
 
-### Features Added
+This branch currently targets:
 
-#### 1. Controller-to-Player Binding (Splitscreen)
-- Each player now has a **"Bind" button** next to the controller dropdown
-- Click "Bind" → Press any button on a controller → Automatically assigns that controller to the player
-- No more guessing which controller is "Controller 1" vs "Controller 2"
+- Steam MCC build `1.3528.0.0`
+- Windows 10/11 or Linux through Steam Proton
+- MCC launched with anti-cheat disabled
+- XInput-compatible controllers
 
-#### 2. Button-to-Action Binding (Gamepad Mapping)
-- Each action in the Gamepad Mapping section has a **"Bind" button**
-- Click "Bind" → Press a button → That button is assigned to the action
+The normal AlphaRing split-screen functionality remains available across MCC titles. The new native dual-monitor renderer is narrower: it is currently intended for two-player Halo CE campaign using classic graphics.
 
-#### 3. Fixed Default Gamepad Mappings
-- **Bug fixed:** Previously, all actions defaulted to "Left Trigger" due to uninitialized memory
-- **Now:** New profiles initialize with standard Xbox Halo controls:
+## Highlights
 
-| Action | Button |
-|--------|--------|
-| Jump | A |
-| Melee | B |
-| Action/Interact | X |
-| Change Weapon | Y |
-| Reload | RB |
-| Switch Grenades | LB |
-| Shoot | RT |
-| Throw Grenade | LT |
-| Flashlight | D-pad Up |
-| Crouch | Left Stick Click |
-| Zoom | Right Stick Click |
+- Local MCC split-screen inherited from AlphaRing
+- Player 1 keyboard and mouse support
+- Explicit `Keyboard + mouse`, controller, and `Not assigned` input states
+- Controller auto-detection with duplicate-assignment protection
+- Searchable gamepad mapping editor and reusable mapping presets
+- Reorganized player profiles and a modernized ImGui interface
+- Linux/Proton DLL loading and MinGW build support
+- Automatic Windows and Linux installers with Steam library detection
+- Experimental two-monitor output for two-player Halo CE
+- Native `3440x1440` per-player rendering on the tested ultrawide setup
 
----
+## Important Limitations
 
-## Original Alpha Ring
+- **Disable anti-cheat.** Do not use this DLL in anti-cheat-protected matchmaking.
+- **Steam build only.** Microsoft Store builds are not supported by this branch.
+- **Version-sensitive.** MCC updates can invalidate offsets and hooks.
+- **Keyboard and mouse are Player 1 only.** Additional players require XInput controllers.
+- **Two-monitor native mode is experimental and currently limited to two players.**
+- **Use Halo CE classic graphics in native monitor mode.** Anniversary graphics use a different rendering pipeline and currently produce broken geometry, lighting, and post-processing.
+- Alt-tab, display-mode changes, and MCC video-setting changes can still destabilize the experimental output windows.
 
-A Modding Tool for MCC
+## Installation
 
-[![Build status](https://ci.appveyor.com/api/projects/status/o3qbtc7jirw81xmb?svg=true)](https://ci.appveyor.com/project/WinterSquire/alpharing)
-[![](https://dcbadge.limes.pink/api/server/https://discord.gg/TUyAnCrpuz)](https://discord.gg/TUyAnCrpuz)
+Download or build `WTSAPI32.dll`, then use the installer for your platform. The scripts detect common Steam libraries, let you choose when multiple MCC installations exist, back up an existing proxy DLL, and install the required `alpha_ring` resources.
 
-### Showcase
+### Linux / Proton
 
-| | |
-|--|--|
-| Camera Tool (H3) <br> ![Camera](https://github.com/WinterSquire/AlphaRing/assets/135317392/d359b2e8-5302-430f-be0d-bc065e63f546) | Object Browser (H3) <br> ![Object](https://github.com/WinterSquire/AlphaRing/assets/135317392/0bce1af7-354f-4d9d-92f7-eb2d46d8ae37) |
-| 8 Players Campaign <br> ![Splitscreen 8 players](https://github.com/WinterSquire/AlphaRing/assets/135317392/7d9f4281-892a-47e2-8e0c-845a965e5d11) | Splitscreen With [Mod](https://steamcommunity.com/sharedfiles/filedetails/?id=3153235187) (By [Priception](https://steamcommunity.com/id/priception)) <br> ![H4](https://github.com/WinterSquire/AlphaRing/assets/135317392/5359868c-c5db-4300-9805-84c61b0bd8ee) |
+From the repository or extracted release directory:
 
-### Features
-* Splitscreen (all games)
-* Camera Tool (H3)
-* Object Browser (H3)
-
-### Installation
-Make sure you have the latest [Microsoft Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) installed.
-
-Download the latest stable build from the [Releases](https://github.com/kirklandsig/AlphaRing/releases) page.
-
-Place the DLL into the "Halo The Master Chief Collection\mcc\binaries\win64" directory and launch the game with EAC off.
-
-For Running on Steam Deck/Linux, add the following command in the Steam Game Launch Options:
+```bash
+./scripts/install-linux.sh
 ```
+
+Specify the game or DLL manually when needed:
+
+```bash
+./scripts/install-linux.sh \
+  --mcc "/mnt/games/SteamLibrary/steamapps/common/Halo The Master Chief Collection" \
+  --dll ./WTSAPI32.dll
+```
+
+Add this to MCC's Steam launch options:
+
+```text
 WINEDLLOVERRIDES="WTSAPI32=n,b" %command%
 ```
 
-#### Batocera Linux
+Then select MCC's anti-cheat-disabled launch option. A recent Valve Proton or Proton-GE build is recommended. Non-Xbox controllers may require Steam Input so that Proton exposes them as XInput devices.
 
-For Batocera Linux users, additional setup is required:
+Uninstall or restore the DLL that existed before AlphaRing:
 
-1. **Download Proton GE**: Get the latest `tar.gz` from the [Proton GE releases page](https://github.com/GloriousEggroll/proton-ge-custom/releases) (Proton GE 10-15 or newer recommended)
-
-2. **Install Proton GE**: Unpack the archive to your Steam compatibility tools folder:
-   ```
-   ~/.steam/root/compatibilitytools.d/
-   ```
-
-3. **Restart Steam**: Close and reopen the Steam client for it to detect the new Proton version
-
-4. **Configure the game**:
-   - Right-click MCC → Properties → Compatibility
-   - Enable "Force the use of a specific Steam Play compatibility tool"
-   - Select **Proton GE 10-15** (or your installed version)
-
-5. **Set launch options**: Add the following to Steam Launch Options:
-   ```
-   WINEDLLOVERRIDES="WTSAPI32=n,b" %command%
-   ```
-
-6. **Controller Setup (Important for non-Xbox controllers)**:
-   - For 8BitDo and other third-party controllers, enable **Steam Input** for the controller
-   - Go to Steam → Settings → Controller → Enable "Xbox Configuration Support"
-   - This allows Steam to translate your controller inputs to XInput, which MCC and AlphaRing expect
-   - Without this, some buttons (like A or stick clicks) may not be detected
-
-> **Note:** The unofficial Batocera add-ons version of the Steam client has been tested and works with this setup.
-
-### Usage
-Toggle menu: `F4` or `Controller Back` + `Controller Start`
-
-To navigate using Controller use the `Right Stick` to move the mouse and `RB` to click.
-
-When the menu is open, game input is disabled.
-
----
-
-## Building from Source
-
-### Prerequisites
-- Visual Studio 2022 Build Tools
-- CMake 3.27+
-
-### Build Commands
 ```bash
-# First time setup
-mkdir build && cd build
-cmake .. -G "Visual Studio 17 2022" -A x64
+./scripts/install-linux.sh --uninstall
+```
 
-# Build
-"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe" WTSAPI32.vcxproj -p:Configuration=Release -p:Platform=x64
+### Windows
+
+From PowerShell in the repository or extracted release directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+```
+
+Specify an MCC directory when automatic detection does not find it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 `
+  -MccPath "D:\SteamLibrary\steamapps\common\Halo The Master Chief Collection" `
+  -DllPath ".\WTSAPI32.dll"
+```
+
+Launch MCC using **Anti-Cheat Disabled (Mods and Limited Services)**.
+
+To uninstall:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Uninstall
+```
+
+### Manual Installation
+
+1. Copy `WTSAPI32.dll` to:
+
+   ```text
+   Halo The Master Chief Collection/MCC/Binaries/Win64/
+   ```
+
+2. Copy the contents of `res/` to:
+
+   ```text
+   Halo The Master Chief Collection/alpha_ring/
+   ```
+
+3. On Linux, set `WINEDLLOVERRIDES="WTSAPI32=n,b" %command%` in Steam.
+4. Launch MCC with anti-cheat disabled.
+
+## Basic Split-Screen Setup
+
+1. Open AlphaRing's overlay.
+2. Open **Split Screen**.
+3. Enable split screen and select the player count.
+4. Assign `Keyboard + mouse` or a controller to Player 1.
+5. Assign a different controller to each additional player.
+6. Use **Detect** and press a button when the controller number is unknown.
+7. Start the campaign, custom game, or supported MCC session normally.
+
+The input selector marks connected and disconnected controllers. A controller already assigned to another active player cannot be selected again. Gamepad action bindings are available under **Player settings > Controller mapping**.
+
+The overlay is toggled with `F4` or controller `Start + Back`. Right stick moves the overlay cursor and right shoulder selects an item.
+
+## Experimental Two-Monitor Mode
+
+The monitor feature does not run a second MCC process. It enlarges selected Halo CE D3D11 render targets into one vertically combined frame, then presents the top player and bottom player through borderless output windows on separate displays.
+
+On the tested setup:
+
+- Primary: `3440x1440`
+- Secondary: `2560x1440`
+- Combined native source: `3440x2880`
+- Each player source: `3440x1440`
+
+When **Match primary monitor aspect** is enabled, Player 2 retains the primary ultrawide aspect ratio and is letterboxed with black bars on the narrower monitor.
+
+### Recommended Halo CE Workflow
+
+1. Stay in the MCC menus before selecting or loading Halo CE.
+2. Open **Split Screen Setup > Displays (Experimental)**.
+3. Leave **Auto-detect monitors**, **Show only during split gameplay**, and **Match primary monitor aspect** enabled.
+4. Enable **Native player resolution** for Halo CE. The renderer should report that it is armed for the next Halo CE selection.
+5. Start the output windows.
+6. Configure two players and their inputs on the **Players** tab.
+7. Select Halo CE, switch to classic graphics, and start the mission.
+
+The output windows hide while AlphaRing or MCC's pause/settings interface is open. After returning to gameplay, movement input from Player 1 restores the monitor outputs.
+
+### Why Anniversary Graphics Are Unsupported
+
+The current native mode remaps selected render-target heights, rasterizer viewports, scissor rectangles, and texture-copy coordinates. Halo CE classic rendering follows that path closely enough to produce complete player frames. Anniversary rendering has additional color, depth, lighting, resolve, and post-processing passes with their own resolution-dependent shader data. Those passes are not fully remapped yet, so classic graphics are required.
+
+## Troubleshooting
+
+### AlphaRing does not appear
+
+- Confirm `WTSAPI32.dll` is in `MCC/Binaries/Win64`.
+- Launch with anti-cheat disabled.
+- On Linux, confirm the `WINEDLLOVERRIDES` launch option is present.
+- Check `MCC/Binaries/Win64/alpharing.log`.
+
+### Player 2 cannot move
+
+- Confirm the player is assigned to a connected controller, not `Not assigned`.
+- Do not assign the same controller to two players.
+- Enable Steam Input for controllers that are not exposed as XInput devices.
+- Check the player's controller mapping and load or reset the default mapping.
+
+### Dual-monitor output is black or corrupt
+
+- Enable native rendering before selecting/loading Halo CE.
+- Use classic graphics.
+- Avoid changing MCC resolution or display mode after starting output windows.
+- Stop and restart the output windows after changing monitor layout.
+
+## Building From Source
+
+### Linux Cross-Compile
+
+Required tools include CMake 3.27+, Ninja, and the MinGW-w64 GCC toolchain. On Arch-based systems the compiler package is `mingw-w64-gcc`; Debian-based systems commonly provide `g++-mingw-w64-x86-64`.
+
+```bash
+cmake -S . -B build-mingw -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+  -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
+
+cmake --build build-mingw
+```
+
+Output: `build-mingw/WTSAPI32.dll`
+
+### Windows
+
+Install Visual Studio 2022 Build Tools with the C++ workload and CMake 3.27+.
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
 ```
 
 Output: `build/Release/WTSAPI32.dll`
 
----
+## Project Lineage and Credits
 
-## Credits
-- **Original AlphaRing:** [WinterSquire](https://github.com/WinterSquire/AlphaRing)
-- **Profile Tweaks Fork:** [thejackbitt](https://github.com/thejackbitt/AlphaRing)
-- **This Fork:** kirklandsig (controller binding features)
-- [Assembly](https://github.com/XboxChaos/Assembly) for the tag group research.
-- [Blender](https://github.com/blender/blender) for the bezier curve calculation.
-- [Priception](https://github.com/Priception) for adding UI controller support and helping with the interface and crash issue.
+This repository intentionally preserves credit for the work it builds upon:
+
+- [WinterSquire/AlphaRing](https://github.com/WinterSquire/AlphaRing) - original AlphaRing project and core MCC tooling
+- [thejackbitt/AlphaRing](https://github.com/thejackbitt/AlphaRing) - profile-focused fork used in the later fork lineage
+- [kirklandsig/AlphaRing](https://github.com/kirklandsig/AlphaRing) - Proton compatibility, controller binding work, fixes, and the experimental branch this fork started from
+- [miguelsilva5989/AlphaRing](https://github.com/miguelsilva5989/AlphaRing) - modernized UI, safer input setup, Linux build work, and experimental native dual-monitor rendering
+- [Priception](https://github.com/Priception) - controller UI support and interface/crash assistance in upstream AlphaRing
+- [Assembly](https://github.com/XboxChaos/Assembly) - tag-group research referenced by AlphaRing
+- [Blender](https://github.com/blender/blender) - Bezier curve calculation referenced by AlphaRing
+
+Additional contributor history remains available in Git. The original MIT license and WinterSquire copyright notice are preserved in [LICENCE.txt](LICENCE.txt).
+
+## License
+
+MIT. See [LICENCE.txt](LICENCE.txt).
