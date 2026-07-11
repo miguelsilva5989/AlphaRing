@@ -248,16 +248,29 @@ namespace MCC::Splitscreen {
         ImGui::SameLine();
         for (int value = 1; value <= 4; ++value) {
             ImGui::PushID(value);
-            if (*count == value) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            const bool selected = *count == value;
+            if (selected) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.64f, 0.44f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.75f, 0.53f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.54f, 0.37f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.58f, 1.0f, 0.79f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.14f, 0.15f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.30f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.40f, 0.53f, 1.0f));
             }
             if (ImGui::Button(std::to_string(value).c_str(), ImVec2(38.0f, 0.0f))) {
                 *count = value;
                 changed = true;
             }
-            if (*count == value)
-                ImGui::PopStyleColor(2);
+            if (selected) {
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor(5);
+            } else {
+                ImGui::PopStyleColor(3);
+            }
             ImGui::PopID();
             if (value != 4)
                 ImGui::SameLine(0.0f, 4.0f);
