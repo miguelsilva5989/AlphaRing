@@ -4,6 +4,14 @@ AlphaRing is an experimental modding and local split-screen tool for the Steam v
 
 > This is an improvement fork, not a new original project. AlphaRing was created by [WinterSquire](https://github.com/WinterSquire/AlphaRing), with important work inherited through the [thejackbitt fork](https://github.com/thejackbitt/AlphaRing) and [kirklandsig fork](https://github.com/kirklandsig/AlphaRing). See [Credits](#project-lineage-and-credits) for the full lineage.
 
+## Showcase
+
+### New in This Fork: Redesigned Split-Screen Setup
+
+![New AlphaRing split-screen setup UI with controller mapping and live two-player gameplay](doc/images/new-split-screen-ui.png)
+
+**This is the new interface added by this fork.** It combines player and input assignment, controller detection, searchable button mapping, profile controls, and the experimental split-screen output workflow in one setup window.
+
 ## Status
 
 This branch currently targets:
