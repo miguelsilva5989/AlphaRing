@@ -1,5 +1,6 @@
 #include "String.h"
 
+#include <climits>
 #include <windows.h>
 
 void String::convert(char *dest, const wchar_t *src, size_t n) {
