@@ -4,6 +4,8 @@ AlphaRing is an experimental modding and local split-screen tool for the Steam v
 
 > This is an improvement fork, not a new original project. AlphaRing was created by [WinterSquire](https://github.com/WinterSquire/AlphaRing), with important work inherited through the [thejackbitt fork](https://github.com/thejackbitt/AlphaRing) and [kirklandsig fork](https://github.com/kirklandsig/AlphaRing). See [Credits](#project-lineage-and-credits) for the full lineage.
 
+**[Download the latest AlphaRing release](https://github.com/miguelsilva5989/AlphaRing/releases/latest)**
+
 ## Showcase
 
 ### New in This Fork: Redesigned Split-Screen Setup
@@ -50,7 +52,7 @@ The normal AlphaRing split-screen functionality remains available across MCC tit
 
 ## Installation
 
-Download or build `WTSAPI32.dll`, then use the installer for your platform. The scripts detect common Steam libraries, let you choose when multiple MCC installations exist, back up an existing proxy DLL, and install the required `alpha_ring` resources. They record the installed DLL hash and will not remove an untracked or subsequently modified DLL unless forced.
+Download the ZIP from the [latest release](https://github.com/miguelsilva5989/AlphaRing/releases/latest), extract it, then use the installer for your platform. You can also build `WTSAPI32.dll` from source. The scripts detect common Steam libraries, let you choose when multiple MCC installations exist, back up an existing proxy DLL, and install the required `alpha_ring` resources. They record the installed DLL hash and will not remove an untracked or subsequently modified DLL unless forced.
 
 ### Linux / Proton
 
