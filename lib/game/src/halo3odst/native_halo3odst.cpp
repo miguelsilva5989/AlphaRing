@@ -1,5 +1,4 @@
 #include "native_halo3odst.h"
-#include "String.h"
 
 #include <cstring>
 

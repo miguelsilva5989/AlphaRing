@@ -76,7 +76,6 @@ include_directories(${CMAKE_SOURCE_DIR}/lib/json/include)
 # utils
 file(GLOB_RECURSE UTILS_SRC CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/lib/utils/src/*.cpp)
 include_directories(${CMAKE_SOURCE_DIR}/lib/utils/inc)
-include_directories(${CMAKE_SOURCE_DIR}/lib/utils/src)
 add_library(utils ${UTILS_SRC} "lib/game/inc/1.3495.0.0/offset_groundhog.h" "lib/game/inc/1.3495.0.0/offset_halo1.h" "lib/game/inc/1.3495.0.0/offset_halo2.h" "lib/game/inc/1.3495.0.0/offset_halo3.h" "lib/game/inc/1.3495.0.0/offset_halo3odst.h" "lib/game/inc/1.3495.0.0/offset_halo4.h" "lib/game/inc/1.3495.0.0/offset_haloreach.h" "lib/game/inc/1.3495.0.0/offset_mcc.h")
 
 # game
