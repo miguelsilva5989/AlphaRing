@@ -1,24 +1,51 @@
 #include "CPatchSet.h"
 
+CPatchSet::~CPatchSet() {
+    detach();
+    for (auto* patch : m_embed_patches)
+        delete patch;
+    for (auto* patch : m_patches)
+        delete patch;
+}
+
 void CPatchSet::clear() {
-    for (auto patch : m_patches) {
-        patch->setState(false);
+    for (auto* patch : m_patches) {
+        patch->restore();
         delete patch;
     }
     m_patches.clear();
 }
 
-void CPatchSet::apply() {
-    for (auto patch : m_embed_patches)
-        if (patch->enabled())
-            patch->apply();
+bool CPatchSet::apply() {
+    for (auto* patch : m_embed_patches) {
+        if (patch->enabled() && !patch->apply()) {
+            detach();
+            return false;
+        }
+    }
 
-    for (auto patch : m_patches)
-        if (patch->enabled())
-            patch->apply();
+    for (auto* patch : m_patches) {
+        if (patch->enabled() && !patch->apply()) {
+            detach();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CPatchSet::detach() {
+    bool result = true;
+    for (auto* patch : m_embed_patches)
+        result = patch->restore() && result;
+    for (auto* patch : m_patches)
+        result = patch->restore() && result;
+    hModule = 0;
+    return result;
 }
 
 void CPatchSet::update(__int64 hModule) {
+    if (this->hModule && this->hModule != hModule)
+        detach();
     this->hModule = hModule;
 }
 

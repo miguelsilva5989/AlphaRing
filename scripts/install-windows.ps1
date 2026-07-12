@@ -1,7 +1,8 @@
 param(
     [string]$MccPath,
     [string]$DllPath,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,8 +95,29 @@ if ($MccPath) {
 
 $Target = Join-Path $Win64 "WTSAPI32.dll"
 $Backup = "$Target.alpharing-backup"
+$GameRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $Win64))
+$ResourceTarget = Join-Path $GameRoot "alpha_ring"
+$Manifest = Join-Path $ResourceTarget "install-manifest.json"
 
 if ($Uninstall) {
+    $ExpectedHash = $null
+    if (Test-Path -LiteralPath $Manifest -PathType Leaf) {
+        try {
+            $ExpectedHash = (Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json).dll_sha256
+        } catch {
+            if (-not $Force) { throw "The AlphaRing install manifest is invalid. Use -Force only if this DLL belongs to AlphaRing." }
+        }
+    }
+    if (Test-Path -LiteralPath $Target -PathType Leaf) {
+        $ActualHash = (Get-FileHash -LiteralPath $Target -Algorithm SHA256).Hash
+        if (-not $ExpectedHash -and -not $Force) {
+            throw "Refusing to remove an untracked DLL: $Target. Use -Force only if it belongs to AlphaRing."
+        }
+        if ($ExpectedHash -and $ActualHash -ne $ExpectedHash -and -not $Force) {
+            throw "Refusing to remove a DLL modified after AlphaRing was installed: $Target"
+        }
+    }
+
     if (Test-Path -LiteralPath $Backup) {
         Move-Item -LiteralPath $Backup -Destination $Target -Force
         Write-Host "Restored previous DLL: $Target"
@@ -105,7 +127,13 @@ if ($Uninstall) {
     } else {
         Write-Host "AlphaRing DLL is not installed at: $Target"
     }
+    Remove-Item -LiteralPath $Manifest -Force -ErrorAction SilentlyContinue
+    Write-Host "User settings and alpha_ring resources were preserved."
     exit 0
+}
+
+if (Get-Process -Name "MCC-Win64-Shipping" -ErrorAction SilentlyContinue) {
+    throw "MCC is running. Close the game before installing AlphaRing."
 }
 
 if (-not $DllPath) {
@@ -125,13 +153,11 @@ if (-not $DllPath -or -not (Test-Path -LiteralPath $DllPath -PathType Leaf)) {
     throw "WTSAPI32.dll was not found. Pass -DllPath C:\path\to\WTSAPI32.dll"
 }
 
-if ((Test-Path -LiteralPath $Target) -and -not (Test-Path -LiteralPath $Backup)) {
-    Copy-Item -LiteralPath $Target -Destination $Backup
-    Write-Host "Backed up existing DLL: $Backup"
+$Header = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $DllPath).Path)
+if ($Header.Length -lt 2 -or $Header[0] -ne 0x4d -or $Header[1] -ne 0x5a) {
+    throw "The selected DLL is not a Windows PE file: $DllPath"
 }
-Copy-Item -LiteralPath $DllPath -Destination $Target -Force
 
-$GameRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $Win64))
 $ResourceSource = $null
 foreach ($Candidate in @(
     (Join-Path $ScriptDir "..\res"),
@@ -144,11 +170,27 @@ foreach ($Candidate in @(
         break
     }
 }
-if ($ResourceSource) {
-    $ResourceTarget = Join-Path $GameRoot "alpha_ring"
-    New-Item -ItemType Directory -Path $ResourceTarget -Force | Out-Null
-    Copy-Item -Path (Join-Path $ResourceSource "*") -Destination $ResourceTarget -Recurse -Force
+if (-not $ResourceSource) {
+    throw "Required alpha_ring resources were not found beside the installer"
 }
+
+if ((Test-Path -LiteralPath $Target) -and -not (Test-Path -LiteralPath $Backup)) {
+    Copy-Item -LiteralPath $Target -Destination $Backup
+    Write-Host "Backed up existing DLL: $Backup"
+}
+Copy-Item -LiteralPath $DllPath -Destination $Target -Force
+
+New-Item -ItemType Directory -Path $ResourceTarget -Force | Out-Null
+Copy-Item -Path (Join-Path $ResourceSource "*") -Destination $ResourceTarget -Recurse -Force
+
+$ManifestData = [ordered]@{
+    schema = 1
+    dll_sha256 = (Get-FileHash -LiteralPath $Target -Algorithm SHA256).Hash
+    target = $Target
+}
+$ManifestTemporary = "$Manifest.tmp"
+$ManifestData | ConvertTo-Json | Set-Content -LiteralPath $ManifestTemporary -Encoding UTF8
+Move-Item -LiteralPath $ManifestTemporary -Destination $Manifest -Force
 
 Write-Host ""
 Write-Host "Installed AlphaRing to:"

@@ -4,7 +4,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <WinSock2.h>
+#include <winsock2.h>
 #include <windows.h>
 #include <winhttp.h>
 

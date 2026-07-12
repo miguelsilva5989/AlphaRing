@@ -5,14 +5,16 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 mcc_path=""
 dll_path=""
 uninstall=false
+force=false
 
 usage() {
     cat <<'EOF'
-Usage: install-linux.sh [--mcc PATH] [--dll PATH] [--uninstall]
+Usage: install-linux.sh [--mcc PATH] [--dll PATH] [--uninstall] [--force]
 
   --mcc PATH    MCC game directory or MCC/Binaries/Win64 directory
   --dll PATH    WTSAPI32.dll to install
   --uninstall   Restore the previous DLL, or remove AlphaRing's DLL
+  --force       Replace/remove a DLL even when ownership cannot be verified
 EOF
 }
 
@@ -28,6 +30,10 @@ while (($#)); do
             ;;
         --uninstall)
             uninstall=true
+            shift
+            ;;
+        --force)
+            force=true
             shift
             ;;
         -h|--help)
@@ -135,8 +141,32 @@ fi
 
 target="$win64/WTSAPI32.dll"
 backup="$target.alpharing-backup"
+game_root="$(dirname -- "$(dirname -- "$(dirname -- "$win64")")")"
+manifest="$game_root/alpha_ring/install-manifest.txt"
+
+file_sha256() {
+    sha256sum -- "$1" | awk '{print $1}'
+}
+
+manifest_hash() {
+    [[ -f "$manifest" ]] || return 1
+    awk '$1 == "dll_sha256" { print $2; exit }' "$manifest"
+}
 
 if $uninstall; then
+    expected_hash="$(manifest_hash || true)"
+    if [[ -f "$target" ]]; then
+        actual_hash="$(file_sha256 "$target")"
+        if [[ -z "$expected_hash" && "$force" != true ]]; then
+            printf 'Refusing to remove an untracked DLL: %s\nRe-run with --force only if it belongs to AlphaRing.\n' "$target" >&2
+            exit 1
+        fi
+        if [[ -n "$expected_hash" && "$actual_hash" != "$expected_hash" && "$force" != true ]]; then
+            printf 'Refusing to remove a DLL modified after installation: %s\n' "$target" >&2
+            exit 1
+        fi
+    fi
+
     if [[ -f "$backup" ]]; then
         mv -f -- "$backup" "$target"
         printf 'Restored previous DLL: %s\n' "$target"
@@ -146,7 +176,14 @@ if $uninstall; then
     else
         printf 'AlphaRing DLL is not installed at: %s\n' "$target"
     fi
+    rm -f -- "$manifest"
+    printf 'User settings and alpha_ring resources were preserved.\n'
     exit 0
+fi
+
+if pgrep -f 'MCC-Win64-Shipping.exe' >/dev/null 2>&1; then
+    printf 'MCC is running. Close the game before installing AlphaRing.\n' >&2
+    exit 1
 fi
 
 if [[ -z "$dll_path" ]]; then
@@ -166,14 +203,11 @@ if [[ ! -f "$dll_path" ]]; then
     exit 1
 fi
 
-if [[ -f "$target" && ! -f "$backup" ]]; then
-    cp -a -- "$target" "$backup"
-    printf 'Backed up existing DLL: %s\n' "$backup"
+if [[ "$(head -c 2 -- "$dll_path")" != "MZ" ]]; then
+    printf 'The selected DLL is not a Windows PE file: %s\n' "$dll_path" >&2
+    exit 1
 fi
 
-install -m 0755 -- "$dll_path" "$target"
-
-game_root="$(dirname -- "$(dirname -- "$(dirname -- "$win64")")")"
 resource_source=""
 for candidate in "$script_dir/../res" "$script_dir/../alpha_ring" "$script_dir/res" "$script_dir/alpha_ring"; do
     if [[ -d "$candidate" ]]; then
@@ -181,10 +215,29 @@ for candidate in "$script_dir/../res" "$script_dir/../alpha_ring" "$script_dir/r
         break
     fi
 done
-if [[ -n "$resource_source" ]]; then
-    mkdir -p -- "$game_root/alpha_ring"
-    cp -a -- "$resource_source/." "$game_root/alpha_ring/"
+if [[ -z "$resource_source" ]]; then
+    printf 'Required alpha_ring resources were not found beside the installer.\n' >&2
+    exit 1
 fi
+
+if [[ -f "$target" && ! -f "$backup" ]]; then
+    cp -a -- "$target" "$backup"
+    printf 'Backed up existing DLL: %s\n' "$backup"
+fi
+
+install -m 0644 -- "$dll_path" "$target"
+
+mkdir -p -- "$game_root/alpha_ring"
+cp -a -- "$resource_source/." "$game_root/alpha_ring/"
+
+manifest_tmp="$manifest.tmp"
+installed_hash="$(file_sha256 "$target")"
+{
+    printf 'ALPHARING_INSTALL_MANIFEST_V1\n'
+    printf 'dll_sha256 %s\n' "$installed_hash"
+    printf 'target %s\n' "$target"
+} > "$manifest_tmp"
+mv -f -- "$manifest_tmp" "$manifest"
 
 printf '\nInstalled AlphaRing to:\n  %s\n' "$target"
 printf '\nSteam launch options:\n  WINEDLLOVERRIDES="WTSAPI32=n,b" %%command%%\n'

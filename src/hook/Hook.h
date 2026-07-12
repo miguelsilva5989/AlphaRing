@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <initializer_list>
+#include <vector>
 
 #define DefDetourFunction(return_type, call_type, name, ...) \
     static return_type (call_type *ppOriginal_##name)(__VA_ARGS__); \
@@ -71,9 +72,11 @@ namespace AlphaRing::Hook {
     bool IsWS();
 
     bool Detour(const std::initializer_list<Detour_t>& hooks);
+    bool Detour(const std::vector<Detour_t>& hooks);
     bool Detour(const std::initializer_list<DetourOffset>& hooks);
     bool Detour(const char* module_name, const std::initializer_list<DetourFunction>& hooks);
-    void Offset(const std::initializer_list<FunctionOffset>& offsets);
+    bool Offset(const std::initializer_list<FunctionOffset>& offsets);
     bool Patch(const char* module_name, const std::initializer_list<PatchFunction>& patches);
     bool Patch(const std::initializer_list<PatchMCC>& patches);
+    bool Remove(void* target);
 }

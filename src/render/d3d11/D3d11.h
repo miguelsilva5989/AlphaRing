@@ -1,15 +1,9 @@
 #pragma once
 
 #include "Graphics.h"
+#include "MonitorLayout.h"
 
 namespace AlphaRing::Render::D3d11 {
-    struct RectI {
-        int x;
-        int y;
-        int w;
-        int h;
-    };
-
     struct MonitorSplitConfig {
         bool auto_detect_monitors;
         bool auto_hide_when_not_split;
@@ -21,6 +15,7 @@ namespace AlphaRing::Render::D3d11 {
     };
 
     bool Initialize();
+    bool Shutdown();
 
     void* GetFunction(int index);
     MonitorSplitConfig& MonitorSplit();
@@ -33,6 +28,7 @@ namespace AlphaRing::Render::D3d11 {
     unsigned ConsumeDetectedSplitViewportMask();
     void NotifyMccModuleLoaded(int title);
     void NotifyMccModuleUnloaded(int title);
+    void NotifyMainSwapChainResize();
     void SetNativeRenderEnabled(bool enabled);
     bool NativeRenderActive();
     const char* NativeRenderStatus();

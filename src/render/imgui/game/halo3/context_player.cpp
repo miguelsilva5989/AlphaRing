@@ -45,7 +45,7 @@ void CHalo3Context::context_player() {
                       p_player->configuration.host.player_team
             );
 
-            ImGui::Text(buffer);
+            ImGui::TextUnformatted(buffer);
 
             if (ImGui::Button("Respawn")) {
                 setState([i] {

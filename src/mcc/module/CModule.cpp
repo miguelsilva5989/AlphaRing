@@ -1,26 +1,37 @@
-#include <unordered_map>
+#include <cstring>
 #include "CModule.h"
 
 CModule::CModule(EntrySet *entrySet, std::initializer_list<CPatch> patches)
 : m_entries(entrySet), m_patches(patches) {};
 
-void CModule::load_module(const module_info_t *p_info) {
-    if (p_info == nullptr) return;
+bool CModule::load_module(const module_info_t *p_info) {
+    if (!p_info || !p_info->hModule || p_info->errorCode != 0)
+        return false;
+
+    unload_module();
 
     m_info = *p_info;
-
-    if (m_info.hModule == 0 || m_info.errorCode != 0) return;
-
     m_patches.update(m_info.hModule);
 
-    m_patches.apply();
-
-    if (m_entries)
-        m_entries->update(m_info.hModule);
+    if (m_entries && !m_entries->update(m_info.hModule)) {
+        m_patches.detach();
+        m_info = {};
+        return false;
+    }
+    if (!m_patches.apply()) {
+        if (m_entries)
+            m_entries->detach();
+        m_info = {};
+        return false;
+    }
+    return true;
 }
 
 void CModule::unload_module() {
-    memset(&m_info, 0, sizeof(module_info_t));
+    if (m_entries)
+        m_entries->detach();
+    m_patches.detach();
+    m_info = {};
 }
 
 #include "mcc/module/entry/halo1/halo1.h"
@@ -31,7 +42,7 @@ void CModule::unload_module() {
 #include "mcc/module/entry/halo4/halo4.h"
 #include "mcc/module/entry/groundhog/groundhog.h"
 
-static struct {
+struct ModuleCollection {
     CModule halo1;
     CModule halo2;
     CModule halo3;
@@ -39,7 +50,12 @@ static struct {
     CModule groundhog;
     CModule halo3odst;
     CModule haloreach;
-} modules {
+};
+
+static ModuleCollection& Modules() {
+    // The registry intentionally lives for the process lifetime. Constructing it
+    // on the bootstrap thread avoids allocation-heavy global constructors in DllMain.
+    static ModuleCollection* modules = new ModuleCollection {
     {nullptr, {
         {"splitscreen_patch1", "", OFFSET_HALO1_PF_4PLAYERS, "\xEB\x18", true},
         {"splitscreen_patch2", "", OFFSET_HALO1_PF_PAUSE, "\xEB", true},
@@ -79,26 +95,33 @@ static struct {
         {"Remove Black Bar2", "remove black bar", 0xB43CF4/*0xB43D24*/, "\x00\x00\x00\x00\x00\x00\x00\x3F\x00\x00\x80\x3F\x00\x00\x80\x3F\x01", true},
         {"Remove Black Bar3", "remove black bar", 0xB43D30/*0xB43D60*/, "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x3F\x00\x00\x00\x3F\x01", true},
 }}};
-
-static std::unordered_map<std::string, CModule*> map_modules {
-    {"halo1.dll", &modules.halo1 + 0},
-    {"halo2.dll", &modules.halo1 + 1},
-    {"halo3.dll", &modules.halo1 + 2},
-    {"halo4.dll", &modules.halo1 + 3},
-    {"groundhog.dll", &modules.halo1 + 4},
-    {"halo3odst.dll", &modules.halo1 + 5},
-    {"haloreach.dll", &modules.halo1 + 6},
-};
+    return *modules;
+}
 
 namespace MCC::Module {
     CModule *GetSubModule(int module) {
-        return &modules.halo1 + module;
+        auto& modules = Modules();
+        switch (module) {
+            case MODULE_HALO1: return &modules.halo1;
+            case MODULE_HALO2: return &modules.halo2;
+            case MODULE_HALO3: return &modules.halo3;
+            case MODULE_HALO4: return &modules.halo4;
+            case MODULE_GROUNDHOG: return &modules.groundhog;
+            case MODULE_HALO3ODST: return &modules.halo3odst;
+            case MODULE_HALOREACH: return &modules.haloreach;
+            default: return nullptr;
+        }
     }
 
     CModule *GetSubModule(const char *module_name) {
-        auto it = map_modules.find(module_name);
-        if (it == map_modules.end())
+        if (!module_name)
             return nullptr;
-        return it->second;
+        for (int module = MODULE_HALO1; module < MODULE_MCC; ++module) {
+            std::string expected = cModuleName[module];
+            expected += ".dll";
+            if (_stricmp(expected.c_str(), module_name) == 0)
+                return GetSubModule(module);
+        }
+        return nullptr;
     }
 }

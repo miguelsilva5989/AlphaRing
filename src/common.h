@@ -8,7 +8,6 @@
 #include "./global/Global.h"
 #include "./filesystem/Filesystem.h"
 
-#undef NDEBUG
 #include <assert.h>
 
 #define assertm(exp, msg) assert(((void)msg, (exp)))

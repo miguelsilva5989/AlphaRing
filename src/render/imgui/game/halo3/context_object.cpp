@@ -65,7 +65,7 @@ void CHalo3Context::context_object() {
 
         // foot
         sprintf(buffer, "Stats: Size(%d), Capacity(%d)", mng->m_size, mng->m_capacity);
-        ImGui::Text(buffer);
+        ImGui::TextUnformatted(buffer);
     }
     ImGui::End();
 }
@@ -119,7 +119,7 @@ Unit:
             eObjectTypeName[p_object->type]
     );
 
-    ImGui::Text(buffer);
+    ImGui::TextUnformatted(buffer);
 
     ImGui::SliderFloat("Scale", &p_object->scale, 0.001f, 10.0f);
     ImGui::SliderFloat("Health", &p_object->health, 0.001f, 100.0f);
@@ -166,7 +166,7 @@ Unit:
             p_unit->aim_target, p_unit->bump_target, p_unit->bump_close
     );
 
-    ImGui::Text(buffer);
+    ImGui::TextUnformatted(buffer);
 
     if (ImGui::SliderFloat("Camo", &p_unit->camo_time, 0, 10.0f)) p_unit->EnableCamo();
     ImGui::Combo("Team", (int*)&p_unit->team, eTeamAIName, sizeof(eTeamAIName) / sizeof(const char *));

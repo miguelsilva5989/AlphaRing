@@ -1,11 +1,16 @@
 #include "mcc/settings/Settings.h"
+#include "mcc/settings/ConfigValidation.h"
 #include "global/Global.h"
 #include "nlohmann/json.hpp"
 #include "log/Log.h"
+#include "filesystem/Filesystem.h"
 
 #include <offset_mcc.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
+#include <string_view>
 #include <windows.h>
 
 using json = nlohmann::json;
@@ -15,63 +20,157 @@ namespace fs = std::filesystem;
 namespace MCC::Settings {
     static SplitscreenConfig g_Config;
     static CGameManager::Profile_t g_Profiles[4];
+    static std::recursive_mutex g_SettingsMutex;
 
     static fs::path GetConfigPath() {
-    char exePath[MAX_PATH] = {0};
-    if (!GetModuleFileNameA(nullptr, exePath, MAX_PATH))
-        return "settings.json";
+        return AlphaRing::Filesystem::DataPath("settings.json");
+    }
 
-        fs::path dir = fs::path(exePath).parent_path();
-        return dir / "settings.json";
-    }    
+    static bool ReadJsonFile(const fs::path& path, json& value) {
+        if (!fs::exists(path))
+            return false;
+
+        std::ifstream file(path, std::ios::binary);
+        if (!file.is_open())
+            return false;
+
+        try {
+            file >> value;
+            return value.is_object();
+        } catch (const std::exception& error) {
+            LOG_ERROR("Cannot parse {}: {}", path.string(), error.what());
+            return false;
+        }
+    }
+
+    static bool WriteJsonFileAtomic(const fs::path& path, json value) {
+        value["schema_version"] = 1;
+        fs::path temporary = path;
+        temporary += ".tmp";
+
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        if (!file.is_open())
+            return false;
+        file << value.dump(4) << '\n';
+        file.flush();
+        const bool written = file.good();
+        file.close();
+        if (!written) {
+            std::error_code ignored;
+            fs::remove(temporary, ignored);
+            return false;
+        }
+
+        if (!MoveFileExW(
+                temporary.c_str(),
+                path.c_str(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            LOG_ERROR("Cannot replace {} atomically: {}", path.string(), GetLastError());
+            std::error_code ignored;
+            fs::remove(temporary, ignored);
+            return false;
+        }
+        return true;
+    }
+
+    template<size_t Size>
+    static bool Utf8ToWide(std::string_view source, wchar_t (&destination)[Size]) {
+        static_assert(Size > 0);
+        std::fill(std::begin(destination), std::end(destination), L'\0');
+        if (source.empty())
+            return true;
+        const int result = MultiByteToWideChar(
+                CP_UTF8,
+                MB_ERR_INVALID_CHARS,
+                source.data(),
+                static_cast<int>(source.size()),
+                destination,
+                static_cast<int>(Size - 1)
+        );
+        return result > 0;
+    }
+
+    static std::string WideToUtf8(const wchar_t* source, size_t max_size) {
+        if (!source || max_size == 0)
+            return {};
+        size_t length = 0;
+        while (length < max_size && source[length] != L'\0')
+            ++length;
+        if (length == 0)
+            return {};
+
+        const int required = WideCharToMultiByte(
+                CP_UTF8, 0, source, static_cast<int>(length), nullptr, 0, nullptr, nullptr);
+        if (required <= 0)
+            return {};
+        std::string result(static_cast<size_t>(required), '\0');
+        WideCharToMultiByte(
+                CP_UTF8, 0, source, static_cast<int>(length), result.data(), required, nullptr, nullptr);
+        return result;
+    }
+
+    static void NormalizeConfiguration() {
+        g_Config.player_count = NormalizePlayerCount(g_Config.player_count);
+
+        std::array<int, kMaximumPlayers> assignments {};
+        for (int player = 0; player < kMaximumPlayers; ++player)
+            assignments[static_cast<size_t>(player)] = g_Profiles[player].controller_index;
+        NormalizeControllerAssignments(g_Config.b_player0_use_km, assignments);
+        for (int player = 0; player < kMaximumPlayers; ++player)
+            g_Profiles[player].controller_index = assignments[static_cast<size_t>(player)];
+    }
+
+    static bool ValidPresetName(const std::string& name) {
+        return !name.empty() && name.size() <= 64 &&
+               std::none_of(name.begin(), name.end(), [](unsigned char character) {
+                   return character < 0x20 || character == 0x7f;
+               });
+    }
 
     const SplitscreenConfig& Splitscreen::Get() {
         return g_Config;
     }
 
     bool Splitscreen::Load() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetConfigPath();
 
-        if (!fs::exists(path))
-            return false;
-
-        std::ifstream file(path);
-        if (!file.is_open())
-            return false;
-
         json j;
-        file >> j;
-
-        if (!j.contains("splitscreen"))
+        if (!ReadJsonFile(path, j))
             return false;
 
-        auto& s = j["splitscreen"];
+        if (!j.contains("splitscreen") || !j["splitscreen"].is_object())
+            return false;
 
-        g_Config.b_override            = s.value("b_override", false);
-        g_Config.player_count          = s.value("player_count", 1);
-        g_Config.b_use_player0_profile = s.value("b_use_player0_profile", true);
-        g_Config.b_player0_use_km      = s.value("b_player0_use_km", false);
-        g_Config.b_override_profile    = s.value("b_override_profile", false);
+        try {
+            auto& s = j["splitscreen"];
+
+            g_Config.b_override            = s.value("b_override", false);
+            g_Config.player_count          = s.value("player_count", 1);
+            g_Config.b_use_player0_profile = s.value("b_use_player0_profile", true);
+            g_Config.b_player0_use_km      = s.value("b_player0_use_km", false);
+            g_Config.b_override_profile    = s.value("b_override_profile", false);
+            NormalizeConfiguration();
+        } catch (const std::exception& error) {
+            LOG_ERROR("Invalid split-screen settings: {}", error.what());
+            return false;
+        }
 
         return true;
     }
 
     bool Profile::Load() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetConfigPath();
 
-        if (!fs::exists(path))
-            return false;
-
-            std::ifstream file(path);
-            if (!file.is_open())
-                return false;
-
             json j;
-            file >> j;
-
-            if (!j.contains("profile_t"))
+            if (!ReadJsonFile(path, j))
                 return false;
 
+            if (!j.contains("profile_t") || !j["profile_t"].is_object())
+                return false;
+
+            try {
             auto& p = j["profile_t"];
             for (int i = 0; i < 4; ++i) {
                 if (!p.contains(std::to_string(i)))
@@ -82,7 +181,7 @@ namespace MCC::Settings {
                 g_Profiles[i].controller_index = entry.value("controller_index", g_Profiles[i].controller_index);
                 auto name = entry.value("name", "");
                 if (!name.empty())
-                    mbstowcs(g_Profiles[i].name, name.c_str(), 1024);
+                    Utf8ToWide(name, g_Profiles[i].name);
                 if (!entry.contains("profile"))
                     continue;
 
@@ -165,7 +264,7 @@ namespace MCC::Settings {
                 const std::string s = prof.value("ServiceTag", "");
                 wmemset(dst.ServiceTag, 0, 4);
                 if (!s.empty()) {
-                    mbstowcs_s(nullptr, dst.ServiceTag, 4, s.c_str(), _TRUNCATE);
+                    Utf8ToWide(s, dst.ServiceTag);
                 }
                 dst.OnlineMedalFlasher = prof.value("OnlineMedalFlasher", dst.OnlineMedalFlasher);
                 dst.VerticalLookSensitivity = prof.value("VerticalLookSensitivity", dst.VerticalLookSensitivity);
@@ -214,7 +313,7 @@ namespace MCC::Settings {
                         dst.LoadoutSlots[o].GrenadeIndex            = slot.value("GrenadeIndex", dst.LoadoutSlots[o].GrenadeIndex);
                         std::string name = slot.value("Name", "");
                         wmemset(dst.LoadoutSlots[o].Name, 0, 14);
-                        mbstowcs(dst.LoadoutSlots[o].Name, name.c_str(), 14);
+                        Utf8ToWide(name, dst.LoadoutSlots[o].Name);
                     }
                 }
                 std::string gs = prof.value("GameSpecific", std::string{});
@@ -273,25 +372,22 @@ namespace MCC::Settings {
                 }
             }
 
+            NormalizeConfiguration();
             return true;
+            } catch (const std::exception& error) {
+                LOG_ERROR("Invalid profile settings: {}", error.what());
+                return false;
+            }
 
     }
 
     bool Splitscreen::Save() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetConfigPath();
 
         json j = json::object();
-        if (fs::exists(path)) {
-            std::ifstream existing(path);
-            if (existing.is_open()) {
-                try {
-                    existing >> j;
-                } catch (const std::exception& e) {
-                    LOG_WARNING("Splitscreen::Save: Failed to parse existing file: {}", e.what());
-                    j = json::object();
-                }
-            }
-        }
+        ReadJsonFile(path, j);
+        NormalizeConfiguration();
 
         j["splitscreen"] = {
             {"b_override", g_Config.b_override},
@@ -301,39 +397,22 @@ namespace MCC::Settings {
             {"b_override_profile", g_Config.b_override_profile}
         };
 
-        std::ofstream file(path, std::ios::trunc);
-        if (!file.is_open())
-            return false;
-
-        file << j.dump(4);
-        return true;
+        return WriteJsonFileAtomic(path, std::move(j));
     }
 
     bool Profile::Save() {
+            std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
             LOG_INFO("Profile::Save starting...");
             fs::path path = GetConfigPath();
             LOG_DEBUG("Profile::Save: Path = {}", path.string());
 
-            json j;
-            if (fs::exists(path)) {
-                std::ifstream file(path);
-                if (file.is_open()) {
-                    try {
-                        file >> j;
-                        LOG_DEBUG("Profile::Save: Loaded existing settings file");
-                    } catch (const std::exception& e) {
-                        LOG_WARNING("Profile::Save: Failed to parse existing file: {}", e.what());
-                        j = json::object();
-                    }
-                }
-            }
+            json j = json::object();
+            ReadJsonFile(path, j);
+            NormalizeConfiguration();
 
             for (int i = 0; i < 4; ++i) {
                 LOG_DEBUG("Profile::Save: Processing player {}", i);
-                std::string name;
-                size_t len = wcslen(g_Profiles[i].name);
-                name.resize(len);
-                wcstombs(name.data(), g_Profiles[i].name, len);
+                const std::string name = WideToUtf8(g_Profiles[i].name, _countof(g_Profiles[i].name));
 
                 json prof;
                 json mapp;
@@ -413,12 +492,7 @@ namespace MCC::Settings {
                 }
                 prof["Skins"] = skinArray;
                 // ServiceTag - ensure null termination before conversion
-                wchar_t tagCopy[5] = {};
-                memcpy(tagCopy, src.ServiceTag, sizeof(src.ServiceTag));
-                tagCopy[4] = L'\0';
-                char buf[5] = {};
-                wcstombs(buf, tagCopy, 4);
-                prof["ServiceTag"] = std::string(buf, strnlen(buf, 4));
+                prof["ServiceTag"] = WideToUtf8(src.ServiceTag, _countof(src.ServiceTag));
                 prof["OnlineMedalFlasher"] = src.OnlineMedalFlasher;
                 prof["VerticalLookSensitivity"] = src.VerticalLookSensitivity;
                 prof["HorizontalLookSensitivity"] = src.HorizontalLookSensitivity;
@@ -465,12 +539,10 @@ namespace MCC::Settings {
                     slot["GrenadeIndex"]            = src.LoadoutSlots[o].GrenadeIndex;
 
                     // Ensure null termination before conversion
-                    wchar_t nameCopy[15] = {};
-                    memcpy(nameCopy, src.LoadoutSlots[o].Name, sizeof(src.LoadoutSlots[o].Name));
-                    nameCopy[14] = L'\0';
-                    char nameBuf[15] = {};
-                    wcstombs(nameBuf, nameCopy, 14);
-                    slot["Name"] = std::string(nameBuf);
+                    slot["Name"] = WideToUtf8(
+                            src.LoadoutSlots[o].Name,
+                            _countof(src.LoadoutSlots[o].Name)
+                    );
 
                     loadoutArray.push_back(slot);
                 }
@@ -532,18 +604,15 @@ namespace MCC::Settings {
                 };
             }
 
-            std::ofstream file(path, std::ios::trunc);
-            if (!file.is_open()) {
-                LOG_ERROR("Profile::Save: Failed to open file for writing");
-                return false;
-            }
-
-            file << j.dump(4);
-            LOG_INFO("Profile::Save: Successfully saved all profiles");
-            return true;
+            const bool saved = WriteJsonFileAtomic(path, std::move(j));
+            if (saved)
+                LOG_INFO("Profile::Save: Successfully saved all profiles");
+            return saved;
         }
 
     void Splitscreen::ApplyToRuntime() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
+        NormalizeConfiguration();
         auto p = AlphaRing::Global::MCC::Splitscreen();
         if (!p)
             return;
@@ -556,8 +625,12 @@ namespace MCC::Settings {
     }
 
     void Profile::ApplyToRuntime() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
+        NormalizeConfiguration();
         for (int i = 0; i < 4; ++i) {
             auto dst = CGameManager::get_profile(i);
+            if (!dst)
+                continue;
             auto& src = g_Profiles[i];
 
             dst->controller_index = src.controller_index;
@@ -569,6 +642,7 @@ namespace MCC::Settings {
     }
 
     void Splitscreen::CaptureFromRuntime() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         auto p = AlphaRing::Global::MCC::Splitscreen();
         if (!p)
             return;
@@ -578,9 +652,11 @@ namespace MCC::Settings {
         g_Config.b_use_player0_profile = p->b_use_player0_profile;
         g_Config.b_player0_use_km      = p->b_player0_use_km;
         g_Config.b_override_profile    = p->b_override_profile;
+        NormalizeConfiguration();
     }
 
     void Profile::CaptureFromRuntime() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         LOG_INFO("Profile::CaptureFromRuntime starting...");
         for (int i = 0; i < 4; ++i) {
             LOG_DEBUG("CaptureFromRuntime: Processing player {}", i);
@@ -720,11 +796,13 @@ namespace MCC::Settings {
             memcpy(&dst.mapping, &src->mapping, sizeof(dst.mapping));
             LOG_DEBUG("CaptureFromRuntime: Player {} done", i);
         }
+        NormalizeConfiguration();
         LOG_INFO("Profile::CaptureFromRuntime complete");
     }
 
     void Profile::Initialize(CGameManager* mng)
     {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         pGameManager = mng;
 
         for (int i = 0; i < 4; ++i)
@@ -732,66 +810,47 @@ namespace MCC::Settings {
             //sets up id, controller_index, name, profile and mapping
             auto& dst = g_Profiles[i];
             auto runtime = CGameManager::get_profile(i);
+            if (!runtime)
+                continue;
 
             dst.controller_index = runtime->controller_index;
             dst.id = runtime->id;
             wcscpy_s(dst.name, _countof(dst.name), runtime-> name);
-            __int64 xuid = CGameManager::get_xuid(i);
         }
+        NormalizeConfiguration();
     }
 
     // Custom Mapping Profiles
     static fs::path GetCustomMappingsPath() {
-        char exePath[MAX_PATH] = {0};
-        if (!GetModuleFileNameA(nullptr, exePath, MAX_PATH))
-            return "custom_mappings.json";
-
-        fs::path dir = fs::path(exePath).parent_path();
-        return dir / "custom_mappings.json";
+        return AlphaRing::Filesystem::DataPath("custom_mappings.json");
     }
 
     std::vector<std::string> CustomMapping::GetProfileNames() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         std::vector<std::string> names;
         fs::path path = GetCustomMappingsPath();
 
-        if (!fs::exists(path))
-            return names;
-
-        std::ifstream file(path);
-        if (!file.is_open())
-            return names;
-
-        try {
-            json j;
-            file >> j;
-
-            if (j.contains("profiles") && j["profiles"].is_object()) {
-                for (auto& [key, value] : j["profiles"].items()) {
-                    names.push_back(key);
-                }
+        json j;
+        if (ReadJsonFile(path, j) && j.contains("profiles") && j["profiles"].is_object()) {
+            for (auto& [key, value] : j["profiles"].items()) {
+                (void)value;
+                names.push_back(key);
             }
-        } catch (...) {
-            // Invalid JSON, return empty
         }
+
+        std::sort(names.begin(), names.end());
 
         return names;
     }
 
     bool CustomMapping::SaveProfile(const std::string& name, const CGamepadMapping& mapping) {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
+        if (!ValidPresetName(name))
+            return false;
         fs::path path = GetCustomMappingsPath();
 
-        json j;
-        // Load existing if present
-        if (fs::exists(path)) {
-            std::ifstream file(path);
-            if (file.is_open()) {
-                try {
-                    file >> j;
-                } catch (...) {
-                    j = json::object();
-                }
-            }
-        }
+        json j = json::object();
+        ReadJsonFile(path, j);
 
         // Ensure profiles object exists
         if (!j.contains("profiles") || !j["profiles"].is_object()) {
@@ -808,28 +867,18 @@ namespace MCC::Settings {
             {"actions", actionsArray}
         };
 
-        std::ofstream file(path, std::ios::trunc);
-        if (!file.is_open())
-            return false;
-
-        file << j.dump(4);
-        return true;
+        return WriteJsonFileAtomic(path, std::move(j));
     }
 
     bool CustomMapping::LoadProfile(const std::string& name, CGamepadMapping& mapping) {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetCustomMappingsPath();
 
-        if (!fs::exists(path))
-            return false;
-
-        std::ifstream file(path);
-        if (!file.is_open())
+        json j;
+        if (!ReadJsonFile(path, j))
             return false;
 
         try {
-            json j;
-            file >> j;
-
             if (!j.contains("profiles") || !j["profiles"].contains(name))
                 return false;
 
@@ -839,7 +888,10 @@ namespace MCC::Settings {
 
             auto& actionsArray = profile["actions"];
             for (size_t i = 0; i < actionsArray.size() && i < 66; ++i) {
-                mapping.actions[i] = static_cast<CGamepadMapping::eButton>(actionsArray[i].get<int>());
+                const int action = actionsArray[i].get<int>();
+                if (action < static_cast<int>(CGamepadMapping::None) || action > static_cast<int>(CGamepadMapping::Y))
+                    return false;
+                mapping.actions[i] = static_cast<CGamepadMapping::eButton>(action);
             }
 
             return true;
@@ -849,94 +901,56 @@ namespace MCC::Settings {
     }
 
     bool CustomMapping::DeleteProfile(const std::string& name) {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetCustomMappingsPath();
 
-        if (!fs::exists(path))
-            return false;
-
-        std::ifstream infile(path);
-        if (!infile.is_open())
-            return false;
-
         json j;
-        try {
-            infile >> j;
-        } catch (...) {
+        if (!ReadJsonFile(path, j))
             return false;
-        }
-        infile.close();
 
         if (!j.contains("profiles") || !j["profiles"].contains(name))
             return false;
 
         j["profiles"].erase(name);
 
-        std::ofstream outfile(path, std::ios::trunc);
-        if (!outfile.is_open())
-            return false;
-
-        outfile << j.dump(4);
-        return true;
+        return WriteJsonFileAtomic(path, std::move(j));
     }
 
     // Custom Profile Presets (armor, colors, sensitivities, etc.)
     static fs::path GetCustomProfilesPath() {
-        char exePath[MAX_PATH] = {0};
-        if (!GetModuleFileNameA(nullptr, exePath, MAX_PATH))
-            return "custom_profiles.json";
-
-        fs::path dir = fs::path(exePath).parent_path();
-        return dir / "custom_profiles.json";
+        return AlphaRing::Filesystem::DataPath("custom_profiles.json");
     }
 
     std::vector<std::string> CustomProfile::GetProfileNames() {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         std::vector<std::string> names;
         fs::path path = GetCustomProfilesPath();
 
-        if (!fs::exists(path))
-            return names;
-
-        std::ifstream file(path);
-        if (!file.is_open())
-            return names;
-
-        try {
-            json j;
-            file >> j;
-
-            if (j.contains("profiles") && j["profiles"].is_object()) {
-                for (auto& [key, value] : j["profiles"].items()) {
-                    names.push_back(key);
-                }
+        json j;
+        if (ReadJsonFile(path, j) && j.contains("profiles") && j["profiles"].is_object()) {
+            for (auto& [key, value] : j["profiles"].items()) {
+                (void)value;
+                names.push_back(key);
             }
-        } catch (...) {
-            // Invalid JSON, return empty
         }
+
+        std::sort(names.begin(), names.end());
 
         return names;
     }
 
     bool CustomProfile::SaveProfile(const std::string& name, const CUserProfile& src) {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
+        if (!ValidPresetName(name))
+            return false;
         LOG_INFO("SaveProfile: Starting save for preset '{}'", name);
 
         try {
             fs::path path = GetCustomProfilesPath();
             LOG_DEBUG("SaveProfile: Path = {}", path.string());
 
-            json j;
-            // Load existing if present
-            if (fs::exists(path)) {
-                std::ifstream file(path);
-                if (file.is_open()) {
-                    try {
-                        file >> j;
-                        LOG_DEBUG("SaveProfile: Loaded existing profiles file");
-                    } catch (const std::exception& e) {
-                        LOG_WARNING("SaveProfile: Failed to parse existing file: {}", e.what());
-                        j = json::object();
-                    }
-                }
-            }
+            json j = json::object();
+            ReadJsonFile(path, j);
 
             // Ensure profiles object exists
             if (!j.contains("profiles") || !j["profiles"].is_object()) {
@@ -1028,13 +1042,8 @@ namespace MCC::Settings {
         LOG_DEBUG("SaveProfile: Skins done, converting ServiceTag...");
 
         // ServiceTag - ensure null termination before conversion (src.ServiceTag is wchar_t[4], may not be null-terminated)
-        wchar_t tagCopy[5] = {};
-        memcpy(tagCopy, src.ServiceTag, sizeof(src.ServiceTag));
-        tagCopy[4] = L'\0';
-        char buf[5] = {};
-        wcstombs(buf, tagCopy, 4);
-        prof["ServiceTag"] = std::string(buf, strnlen(buf, 4));
-        LOG_DEBUG("SaveProfile: ServiceTag = '{}'", buf);
+        prof["ServiceTag"] = WideToUtf8(src.ServiceTag, _countof(src.ServiceTag));
+        LOG_DEBUG("SaveProfile: ServiceTag = '{}'", prof["ServiceTag"].get<std::string>());
 
         prof["OnlineMedalFlasher"] = src.OnlineMedalFlasher;
         prof["VerticalLookSensitivity"] = src.VerticalLookSensitivity;
@@ -1086,12 +1095,10 @@ namespace MCC::Settings {
             slot["EquipmentIndex"] = src.LoadoutSlots[i].EquipmentIndex;
             slot["GrenadeIndex"] = src.LoadoutSlots[i].GrenadeIndex;
             // Ensure null termination before conversion (Name is wchar_t[14], may not be null-terminated)
-            wchar_t nameCopy[15] = {};
-            memcpy(nameCopy, src.LoadoutSlots[i].Name, sizeof(src.LoadoutSlots[i].Name));
-            nameCopy[14] = L'\0';
-            char nameBuf[15] = {};
-            wcstombs(nameBuf, nameCopy, 14);
-            slot["Name"] = std::string(nameBuf);
+            slot["Name"] = WideToUtf8(
+                    src.LoadoutSlots[i].Name,
+                    _countof(src.LoadoutSlots[i].Name)
+            );
             loadoutArray.push_back(slot);
         }
         prof["LoadoutSlots"] = loadoutArray;
@@ -1150,15 +1157,10 @@ namespace MCC::Settings {
 
         j["profiles"][name] = prof;
 
-        std::ofstream file(path, std::ios::trunc);
-        if (!file.is_open()) {
-            LOG_ERROR("SaveProfile: Failed to open file for writing: {}", path.string());
-            return false;
-        }
-
-        file << j.dump(4);
-        LOG_INFO("SaveProfile: Successfully saved preset '{}'", name);
-        return true;
+        const bool saved = WriteJsonFileAtomic(path, std::move(j));
+        if (saved)
+            LOG_INFO("SaveProfile: Successfully saved preset '{}'", name);
+        return saved;
 
         } catch (const std::exception& e) {
             LOG_ERROR("SaveProfile: Exception caught: {}", e.what());
@@ -1170,19 +1172,14 @@ namespace MCC::Settings {
     }
 
     bool CustomProfile::LoadProfile(const std::string& name, CUserProfile& dst) {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetCustomProfilesPath();
 
-        if (!fs::exists(path))
-            return false;
-
-        std::ifstream file(path);
-        if (!file.is_open())
+        json j;
+        if (!ReadJsonFile(path, j))
             return false;
 
         try {
-            json j;
-            file >> j;
-
             if (!j.contains("profiles") || !j["profiles"].contains(name))
                 return false;
 
@@ -1267,7 +1264,7 @@ namespace MCC::Settings {
             const std::string st = prof.value("ServiceTag", "");
             wmemset(dst.ServiceTag, 0, 4);
             if (!st.empty()) {
-                mbstowcs_s(nullptr, dst.ServiceTag, 4, st.c_str(), _TRUNCATE);
+                Utf8ToWide(st, dst.ServiceTag);
             }
 
             dst.OnlineMedalFlasher = prof.value("OnlineMedalFlasher", dst.OnlineMedalFlasher);
@@ -1319,7 +1316,7 @@ namespace MCC::Settings {
                     dst.LoadoutSlots[i].GrenadeIndex = slot.value("GrenadeIndex", dst.LoadoutSlots[i].GrenadeIndex);
                     std::string slotName = slot.value("Name", "");
                     wmemset(dst.LoadoutSlots[i].Name, 0, 14);
-                    mbstowcs(dst.LoadoutSlots[i].Name, slotName.c_str(), 14);
+                    Utf8ToWide(slotName, dst.LoadoutSlots[i].Name);
                 }
             }
 
@@ -1387,34 +1384,19 @@ namespace MCC::Settings {
     }
 
     bool CustomProfile::DeleteProfile(const std::string& name) {
+        std::lock_guard<std::recursive_mutex> lock(g_SettingsMutex);
         fs::path path = GetCustomProfilesPath();
 
-        if (!fs::exists(path))
-            return false;
-
-        std::ifstream infile(path);
-        if (!infile.is_open())
-            return false;
-
         json j;
-        try {
-            infile >> j;
-        } catch (...) {
+        if (!ReadJsonFile(path, j))
             return false;
-        }
-        infile.close();
 
         if (!j.contains("profiles") || !j["profiles"].contains(name))
             return false;
 
         j["profiles"].erase(name);
 
-        std::ofstream outfile(path, std::ios::trunc);
-        if (!outfile.is_open())
-            return false;
-
-        outfile << j.dump(4);
-        return true;
+        return WriteJsonFileAtomic(path, std::move(j));
     }
 
 }

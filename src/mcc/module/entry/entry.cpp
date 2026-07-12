@@ -1,8 +1,6 @@
 #include "entry.h"
 
-#include <cassert>
-
-#include <MinHook.h>
+#include <vector>
 
 Entry::Entry(EntrySet* set, __int64 offset, void *pDetour) {
     m_pOriginal = nullptr;
@@ -14,36 +12,71 @@ Entry::Entry(EntrySet* set, __int64 offset, void *pDetour) {
 }
 
 bool Entry::update(__int64 hModule) {
-    MH_STATUS status;
+    if (!hModule || !m_offset || !m_pDetour)
+        return false;
 
-    if (hModule == 0) return false;
+    if (!detach())
+        return false;
 
-    if (m_target) MH_RemoveHook((void*)m_target);
+    const auto target = hModule + m_offset;
+    if (!AlphaRing::Hook::Detour({
+            {reinterpret_cast<void*>(target), m_pDetour, &m_pOriginal},
+    }))
+        return false;
 
-    m_target = m_offset + hModule;
-
-    status = MH_CreateHook((void*)m_target, (void*)m_pDetour, (void**)&m_pOriginal);
-
-    if (status != MH_OK) return false;
-
-    status = MH_EnableHook((void*)m_target);
-
-    if (status != MH_OK) return false;
-
+    m_target = target;
     return true;
 }
 
+bool Entry::detach() {
+    if (!m_target)
+        return true;
+    const bool removed = AlphaRing::Hook::Remove(reinterpret_cast<void*>(m_target));
+    if (removed) {
+        m_target = 0;
+        m_pOriginal = nullptr;
+    }
+    return removed;
+}
+
 void EntrySet::append(Entry *entry) {
-    assert(entryCount < MAX_ENTRY);
+    if (!entry || entryCount >= MAX_ENTRY)
+        return;
     entryArray[entryCount++] = entry;
 }
 
 bool EntrySet::update(__int64 hModule) {
+    if (!hModule)
+        return false;
+
+    if (!detach())
+        return false;
+    std::vector<AlphaRing::Hook::Detour_t> hooks;
+    hooks.reserve(entryCount);
+    for (int i = 0; i < entryCount; ++i) {
+        Entry* entry = entryArray[i];
+        if (!entry || !entry->m_offset || !entry->m_pDetour)
+            return false;
+        hooks.emplace_back(
+                reinterpret_cast<void*>(hModule + entry->m_offset),
+                entry->m_pDetour,
+                &entry->m_pOriginal
+        );
+    }
+
+    if (!AlphaRing::Hook::Detour(hooks))
+        return false;
+
+    for (int i = 0; i < entryCount; ++i)
+        entryArray[i]->m_target = hModule + entryArray[i]->m_offset;
+    return true;
+}
+
+bool EntrySet::detach() {
     bool result = true;
-
-    if (hModule == 0) return false;
-
-    for (int i = 0; i < entryCount; ++i) result &= entryArray[i]->update(hModule);
-
+    for (int i = 0; i < entryCount; ++i) {
+        if (entryArray[i])
+            result = entryArray[i]->detach() && result;
+    }
     return result;
 }

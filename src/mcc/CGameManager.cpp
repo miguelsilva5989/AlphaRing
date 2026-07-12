@@ -6,13 +6,22 @@
 #include <guiddef.h>
 #include <combaseapi.h>
 
-static struct ProfileContainer_t {CGameManager::Profile_t profiles[4]; ProfileContainer_t();} container;
+struct ProfileContainer_t {
+    CGameManager::Profile_t profiles[4];
+    ProfileContainer_t();
+};
+
+static ProfileContainer_t& Profiles() {
+    // CoCreateGuid and profile construction must run outside the loader lock.
+    static ProfileContainer_t* profiles = new ProfileContainer_t;
+    return *profiles;
+}
 
 CGameManager::Profile_t* CGameManager::get_profile(int index) {
     // Bounds check to prevent out-of-bounds access
     if (index < 0 || index >= 4)
         return nullptr;
-    return container.profiles + index;
+    return Profiles().profiles + index;
 }
 
 // Initialize default Xbox controller mapping for standard Halo controls
@@ -60,6 +69,8 @@ CGameManager::FunctionTable CGameManager::ppOriginal;
 
 bool CGameManager::Initialize(CGameManager* mng) {
     pGameManager = mng;
+    if (!pGameManager || !pGameManager->table)
+        return false;
     return AlphaRing::Hook::Detour({
         {pGameManager->table->get_player_profile, get_player_profile, (void**)&ppOriginal.get_player_profile},
         {pGameManager->table->get_key_state, get_key_state, (void**)&ppOriginal.get_key_state},
@@ -80,9 +91,10 @@ __int64 CGameManager::get_xuid(int index) {
         return 0;
 
     if (index)
-        return container.profiles[index].id;
-    else
-        return pGameManager->ppOriginal.get_xbox_user_id(pGameManager, &result, nullptr, 0, index) ? result : 0;
+        return Profiles().profiles[index].id;
+    else if (pGameManager && ppOriginal.get_xbox_user_id)
+        return ppOriginal.get_xbox_user_id(pGameManager, &result, nullptr, 0, index) ? result : 0;
+    return 0;
 }
 
 CInputDevice *CGameManager::get_controller(int index) {
@@ -103,10 +115,14 @@ CInputDevice *CGameManager::get_controller(int index) {
 }
 
 int CGameManager::get_index(__int64 xuid) {
+    if (xuid == 0)
+        return -1;
+    if (get_xuid(0) == xuid)
+        return 0;
     for (int i = 1; i < 4; ++i)
-        if (container.profiles[i].id == xuid)
+        if (Profiles().profiles[i].id == xuid)
             return i;
-    return 0;
+    return -1;
 }
 
 void CGameManager::set_state(CGameManager *self, eState state) {

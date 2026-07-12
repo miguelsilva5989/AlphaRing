@@ -20,8 +20,8 @@ namespace MCC::Module {
         if (info) {
             AlphaRing::Render::D3d11::NotifyMccModuleLoaded(info->title);
             auto module = GetSubModule(info->title);
-            if (module)
-                module->load_module(info);
+            if (module && !module->load_module(info))
+                LOG_ERROR("MCC module {} failed AlphaRing initialization", info->title);
         }
     }
 
@@ -44,24 +44,20 @@ namespace MCC::Module {
     }
 
     bool Initialize() {
-        bool result;
-
-        result = AlphaRing::Hook::Detour({
+        const bool result = AlphaRing::Hook::Detour({
             {OFFSET_MCC_PF_MODULELOAD, OFFSET_MCC_WS_PF_MODULELOAD,  module_load, (void **)&ppOriginal_module_load},
             {OFFSET_MCC_PF_MODULEUNLOAD, OFFSET_MCC_WS_PF_MODULEUNLOAD, module_unload, (void **)&ppOriginal_module_unload},
         });
 
-        assertm(result, "MCC:Module: failed to create hook");
+        if (!result) {
+            LOG_ERROR("MCC Module: failed to install load/unload hooks");
+            return false;
+        }
 
-        result = AlphaRing::Hook::Patch("KERNEL32.DLL", {
-            {"IsDebuggerPresent", "\x31\xC0\xC3\x90\x90\x90\x90", 7}
-        });
-
-        assertm(result, "MCC:Module: failed to patch module \"kernel32.dll\"");
-
-        // reload patch at startup
-        ReloadPatch("../../../alpha_ring/patch.xml");
-
+#if ALPHARING_DEVTOOLS
+        if (!ReloadPatch("../../../alpha_ring/patch.xml"))
+            LOG_WARNING("MCC Module: no compatible developer patch file was loaded");
+#endif
         return true;
     }
 }
@@ -88,7 +84,10 @@ bool MCC::Module::ReloadPatch(const char *xml_path) {
 
     tinyxml2::XMLDocument doc;
 
-    doc.LoadFile(file);
+    const auto load_result = doc.LoadFile(file);
+    fclose(file);
+    if (load_result != tinyxml2::XML_SUCCESS)
+        return false;
 
     auto root = doc.FirstChildElement();
 
@@ -131,7 +130,7 @@ bool MCC::Module::ReloadPatch(const char *xml_path) {
                           std::strtoull(p_patch_offset, nullptr, 16),
                           p_converter(p_patch_data),patch_enable);
             } catch (std::exception& e) {
-                LOG_ERROR("Patch %s: %s", p_patch_name, e.what());
+                LOG_ERROR("Patch {}: {}", p_patch_name, e.what());
                 continue;
             }
         }
@@ -148,6 +147,9 @@ namespace MCC::Module {
     void ContextEngine();
 
     void ImGuiContext() {
+#if !ALPHARING_DEVTOOLS
+        return;
+#else
         static bool show_patch;
         static bool show_engine;
 
@@ -173,6 +175,7 @@ namespace MCC::Module {
                 ContextEngine();
             ImGui::End();
         }
+#endif
     }
 
     void ContextEngine() {

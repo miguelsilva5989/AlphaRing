@@ -31,6 +31,8 @@ The normal AlphaRing split-screen functionality remains available across MCC tit
 - Controller auto-detection with duplicate-assignment protection
 - Searchable gamepad mapping editor and reusable mapping presets
 - Reorganized player profiles and a modernized ImGui interface
+- Readiness diagnostics plus explicit Apply and Revert controls
+- Native keyboard and controller navigation in the overlay
 - Linux/Proton DLL loading and MinGW build support
 - Automatic Windows and Linux installers with Steam library detection
 - Experimental two-monitor output for two-player Halo CE
@@ -44,11 +46,11 @@ The normal AlphaRing split-screen functionality remains available across MCC tit
 - **Keyboard and mouse are Player 1 only.** Additional players require XInput controllers.
 - **Two-monitor native mode is experimental and currently limited to two players.**
 - **Use Halo CE classic graphics in native monitor mode.** Anniversary graphics use a different rendering pipeline and currently produce broken geometry, lighting, and post-processing.
-- Alt-tab, display-mode changes, and MCC video-setting changes can still destabilize the experimental output windows.
+- Native monitor output still requires runtime testing after MCC, Proton, driver, or display-mode updates.
 
 ## Installation
 
-Download or build `WTSAPI32.dll`, then use the installer for your platform. The scripts detect common Steam libraries, let you choose when multiple MCC installations exist, back up an existing proxy DLL, and install the required `alpha_ring` resources.
+Download or build `WTSAPI32.dll`, then use the installer for your platform. The scripts detect common Steam libraries, let you choose when multiple MCC installations exist, back up an existing proxy DLL, and install the required `alpha_ring` resources. They record the installed DLL hash and will not remove an untracked or subsequently modified DLL unless forced.
 
 ### Linux / Proton
 
@@ -129,11 +131,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Uninstal
 4. Assign `Keyboard + mouse` or a controller to Player 1.
 5. Assign a different controller to each additional player.
 6. Use **Detect** and press a button when the controller number is unknown.
-7. Start the campaign, custom game, or supported MCC session normally.
+7. Confirm the status says **Ready for local play**, then select **Apply changes**.
+8. Start the campaign, custom game, or supported MCC session normally.
 
 The input selector marks connected and disconnected controllers. A controller already assigned to another active player cannot be selected again. Gamepad action bindings are available under **Player settings > Controller mapping**.
 
-The overlay is toggled with `F4` or controller `Start + Back`. Right stick moves the overlay cursor and right shoulder selects an item.
+The overlay is toggled with `F4` or controller `Start + Back`. Navigate with the keyboard, D-pad, or left stick; use controller `A` to activate and `B` to go back.
 
 ## Experimental Two-Monitor Mode
 
@@ -154,7 +157,7 @@ When **Match primary monitor aspect** is enabled, Player 2 retains the primary u
 2. Open **Split Screen Setup > Displays (Experimental)**.
 3. Leave **Auto-detect monitors**, **Show only during split gameplay**, and **Match primary monitor aspect** enabled.
 4. Enable **Native player resolution** for Halo CE. The renderer should report that it is armed for the next Halo CE selection.
-5. Start the output windows.
+5. Select **Apply and start outputs**.
 6. Configure two players and their inputs on the **Players** tab.
 7. Select Halo CE, switch to classic graphics, and start the mission.
 
@@ -171,7 +174,7 @@ The current native mode remaps selected render-target heights, rasterizer viewpo
 - Confirm `WTSAPI32.dll` is in `MCC/Binaries/Win64`.
 - Launch with anti-cheat disabled.
 - On Linux, confirm the `WINEDLLOVERRIDES` launch option is present.
-- Check `MCC/Binaries/Win64/alpharing.log`.
+- Check `Halo The Master Chief Collection/alpha_ring/alpharing.log`.
 
 ### Player 2 cannot move
 
@@ -194,12 +197,10 @@ The current native mode remaps selected render-target heights, rasterizer viewpo
 Required tools include CMake 3.27+, Ninja, and the MinGW-w64 GCC toolchain. On Arch-based systems the compiler package is `mingw-w64-gcc`; Debian-based systems commonly provide `g++-mingw-w64-x86-64`.
 
 ```bash
-cmake -S . -B build-mingw -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-  -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
-
-cmake --build build-mingw
+git clone --recurse-submodules git@github.com:miguelsilva5989/AlphaRing.git
+cd AlphaRing
+cmake --preset mingw-release
+cmake --build --preset mingw-release
 ```
 
 Output: `build-mingw/WTSAPI32.dll`
@@ -215,6 +216,22 @@ cmake --build build --config Release
 
 Output: `build/Release/WTSAPI32.dll`
 
+### Tests
+
+The monitor geometry and controller-assignment rules build and run natively without MCC:
+
+```bash
+cmake -S tests -B build-tests -G Ninja
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
+
+GitHub Actions builds these tests, a MinGW Release DLL, and an MSVC Release DLL. Internal patching, network inspection, and session tools are excluded from normal builds; developers can opt in with `-DALPHARING_DEVTOOLS=ON`.
+
+### Runtime Data
+
+Logs, ImGui layout, settings, mappings, profiles, and installer ownership metadata live under the game root's `alpha_ring/` directory. Existing settings beside `MCC/Binaries/Win64` are migrated on first launch. JSON updates use temporary-file replacement so interrupted writes do not truncate the active configuration.
+
 ## Project Lineage and Credits
 
 This repository intentionally preserves credit for the work it builds upon:
@@ -228,6 +245,7 @@ This repository intentionally preserves credit for the work it builds upon:
 - [Blender](https://github.com/blender/blender) - Bezier curve calculation referenced by AlphaRing
 
 Additional contributor history remains available in Git. The original MIT license and WinterSquire copyright notice are preserved in [LICENCE.txt](LICENCE.txt).
+Third-party licenses are summarized in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), and project lineage is also recorded in [CONTRIBUTORS.md](CONTRIBUTORS.md).
 
 ## License
 

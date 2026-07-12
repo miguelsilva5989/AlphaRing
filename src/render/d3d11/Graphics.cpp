@@ -5,18 +5,45 @@ static Graphics_t graphics;
 Graphics_t* p_graphics = &graphics;
 
 void Graphics_t::SetRenderTargetView() {
-    if (pView != nullptr)
+    if (pContext && pView)
         pContext->OMSetRenderTargets(1, &pView, nullptr);
 }
 
-void Graphics_t::RecreateRenderTargetView() {
-    ID3D11Texture2D *pBackBuffer;
-    pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **) &pBackBuffer);
-    pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &pView);
+void Graphics_t::ReleaseRenderTargetView() {
+    if (pView) {
+        pView->Release();
+        pView = nullptr;
+    }
+}
+
+bool Graphics_t::RecreateRenderTargetView() {
+    if (!pSwapChain || !pDevice)
+        return false;
+
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    const HRESULT get_result = pSwapChain->GetBuffer(
+            0,
+            __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void**>(&pBackBuffer)
+    );
+    if (FAILED(get_result) || !pBackBuffer)
+        return false;
+
+    ID3D11RenderTargetView* new_view = nullptr;
+    const HRESULT create_result = pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &new_view);
     pBackBuffer->Release();
+    if (FAILED(create_result) || !new_view)
+        return false;
+
+    ReleaseRenderTargetView();
+    pView = new_view;
+    return true;
 }
 
 void Graphics_t::SetWireframe() {
+    if (!pDevice || !pContext)
+        return;
+
     D3D11_RASTERIZER_DESC r_desc;
     ID3D11RasterizerState* r_state = nullptr;
     ID3D11RasterizerState* r_state_new = nullptr;

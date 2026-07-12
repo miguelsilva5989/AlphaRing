@@ -1,6 +1,7 @@
 #include "mcc.h"
 
 #include <offset_mcc.h>
+#include "hook/BuildManifest.h"
 
 #include "CGameManager.h"
 #include "CGameGlobal.h"
@@ -15,59 +16,72 @@ namespace MCC {
     static float (__fastcall* deltaTime)(long long qpc);
 
     float DeltaTime(__int64 a1) {
-        return deltaTime(a1);
+        return deltaTime ? deltaTime(a1) : 0.0f;
     }
 
     bool IsInGame() {
-        return *bIsInGame;
+        return bIsInGame && *bIsInGame;
     }
 
     bool Initialize() {
+        const auto& offsets = AlphaRing::Compatibility::CurrentBuild().mcc;
         bool result;
-        CGameEngine** ppGameEngine;
-        CGameManager* game_manager;
-        CDeviceManager** device_manager;
+        CGameEngine** ppGameEngine = nullptr;
+        CGameManager* game_manager = nullptr;
+        CDeviceManager** device_manager = nullptr;
 
-        AlphaRing::Hook::Offset({
-            {0x4000BA0/*0x3FFCAA8*/ , 0x3E4F9F8/*0x3E4B048*/, (void**)&ppGameEngine},
-            {0x3F7B190/*0x3F76E50*/ , 0x3DCA200/*0x3DC54D0*/, (void**)&game_manager},
-            {0x4001B78/*0x3FFFFF8*/ , 0x3E509C0/*0x3E4E590*/, (void**)&device_manager},
-            {OFFSET_MCC_PF_DELTA_TIME, OFFSET_MCC_WS_PF_DELTA_TIME, (void**)&deltaTime},
-            {0x4000B9F/*0x3FFCAA7*/ ,0x3E4F9F7/*0x3E4B047*/, (void**)&bIsInGame},
-            {0x4000BC8/*0x3FFCAC0*/ , 0x3E4FA18/*0x3E4B060*/, (void**)&g_ppGameGlobal},
-        });
+        if (!AlphaRing::Hook::Offset({
+            {offsets.game_engine, 0, (void**)&ppGameEngine},
+            {offsets.game_manager, 0, (void**)&game_manager},
+            {offsets.device_manager, 0, (void**)&device_manager},
+            {offsets.delta_time, 0, (void**)&deltaTime},
+            {offsets.is_in_game, 0, (void**)&bIsInGame},
+            {offsets.game_global, 0, (void**)&g_ppGameGlobal},
+        })) {
+            LOG_ERROR("MCC: failed to resolve the versioned offset manifest");
+            return false;
+        }
 
-        assertm(ppGameEngine != nullptr, "MCC: failed to get ppGameEngine");
-        assertm(game_manager != nullptr, "MCC: failed to get pGameManager");
-        assertm(device_manager != nullptr, "MCC: failed to get ppDeviceManager");
+        if (!ppGameEngine || !game_manager || !device_manager || !deltaTime || !bIsInGame || !g_ppGameGlobal) {
+            LOG_ERROR("MCC: one or more required runtime pointers are unavailable");
+            return false;
+        }
 
         result = CGameEngine::Initialize(ppGameEngine);
 
-        assertm(result, "MCC: failed to initialize GameEngine");
+        if (!result) {
+            LOG_ERROR("MCC: failed to initialize GameEngine");
+            return false;
+        }
 
         result = CGameManager::Initialize(game_manager);
 
-        assertm(result, "MCC: failed to initialize GameManager");
-
-        assertm(GameManager() != nullptr, "MCC:Splitscreen: GameManager is null"); // static instance
+        if (!result || !GameManager()) {
+            LOG_ERROR("MCC: failed to initialize GameManager");
+            return false;
+        }
 
         result = CDeviceManager::Initialize(device_manager);
 
-        assertm(result, "MCC: failed to initialize DeviceManager");
+        if (!result) {
+            LOG_ERROR("MCC: failed to initialize DeviceManager");
+            return false;
+        }
 
         if (!Module::Initialize())
         {
-			MessageBox(nullptr, "MCC: failed to initialize Module", "Error", MB_OK);
+            LOG_ERROR("MCC: failed to initialize Module");
             return false;
         }
 
         if (!Splitscreen::Initialize())
         {
-			MessageBox(nullptr, "MCC: failed to initialize Splitscreen", "Error", MB_OK);
+            LOG_ERROR("MCC: failed to initialize Splitscreen");
             return false;
         }
 
         MCC::Settings::Splitscreen::Load();
+        MCC::Settings::Profile::CaptureFromRuntime();
         bool profileLoad = MCC::Settings::Profile::Load();
         if(profileLoad) {
             MCC::Settings::Profile::ApplyToRuntime();

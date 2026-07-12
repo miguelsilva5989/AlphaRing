@@ -13,13 +13,15 @@
 #include "imgui.h"
 
 #include "../imgui/ImGui.h"
-#include "../Window/Window.h"
+#include "../window/Window.h"
 
 namespace AlphaRing::Render::D3d11 {
     bool CreateHook();
-    void InitMainRender(IDXGISwapChain *swapChain);
+    bool InitMainRender(IDXGISwapChain *swapChain);
 
     void *functions[205];
+    static bool d3d11_initialized = false;
+    static bool main_render_initialization_failed = false;
 
     void *GetFunction(int index) { return functions[index]; }
 
@@ -31,8 +33,14 @@ namespace AlphaRing::Render::D3d11 {
                                                        D3D_FEATURE_LEVEL *, ID3D11DeviceContext **);
 
     DefDetourFunction(HRESULT, __stdcall, Present, IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags) {
+        if (main_render_initialization_failed)
+            return ppOriginal_Present(pSwapChain, SyncInterval, Flags);
+
         if (!Graphics()->pSwapChain) {
-            InitMainRender(pSwapChain);
+            if (!InitMainRender(pSwapChain)) {
+                main_render_initialization_failed = true;
+                return ppOriginal_Present(pSwapChain, SyncInterval, Flags);
+            }
         } else if (Graphics()->pSwapChain != pSwapChain) {
             return ppOriginal_Present(pSwapChain, SyncInterval, Flags);
         }
@@ -90,6 +98,7 @@ namespace AlphaRing::Render::D3d11 {
     };
 
     static bool PrepareMirrorSwapChainsForStart();
+    static void ShutdownMirrorWindowThread();
 
     MonitorSplitConfig& MonitorSplit() {
         return monitor_split;
@@ -379,19 +388,6 @@ namespace AlphaRing::Render::D3d11 {
         mirror.buffer_format = DXGI_FORMAT_UNKNOWN;
     }
 
-    static void DestroyMirrorWindow(MirrorWindow& mirror) {
-        ReleaseMirrorSwapChain(mirror);
-        if (mirror.hwnd) {
-            DestroyWindow(mirror.hwnd);
-            mirror.hwnd = nullptr;
-        }
-        if (mirror.backdrop_hwnd) {
-            DestroyWindow(mirror.backdrop_hwnd);
-            mirror.backdrop_hwnd = nullptr;
-        }
-        mirror.content_rect = {};
-    }
-
     static bool CreateMirrorSwapChain(
             MirrorWindow& mirror,
             UINT buffer_width,
@@ -407,15 +403,15 @@ namespace AlphaRing::Render::D3d11 {
         DXGI_SWAP_CHAIN_DESC desc {};
         desc.BufferDesc.Width = buffer_width;
         desc.BufferDesc.Height = buffer_height;
-        desc.BufferDesc.RefreshRate.Numerator = 60;
+        desc.BufferDesc.RefreshRate.Numerator = 0;
         desc.BufferDesc.RefreshRate.Denominator = 1;
         desc.BufferDesc.Format = buffer_format;
         desc.SampleDesc.Count = 1;
         desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        desc.BufferCount = 1;
+        desc.BufferCount = 2;
         desc.OutputWindow = mirror.hwnd;
         desc.Windowed = TRUE;
-        desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 
         LOG_INFO(
                 "Mirror Split: creating output buffer {}x{} format={} hwnd={:p}",
@@ -431,9 +427,22 @@ namespace AlphaRing::Render::D3d11 {
         );
 
         if (FAILED(result)) {
-            LOG_ERROR("Mirror Split: CreateSwapChain failed: 0x{:x}", static_cast<unsigned>(result));
-            mirror.swap_chain = nullptr;
-            return false;
+            LOG_WARNING(
+                    "Mirror Split: flip-model swap chain failed (0x{:x}); using compatibility mode",
+                    static_cast<unsigned>(result)
+            );
+            desc.BufferCount = 1;
+            desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+            result = Graphics()->pIDXGIFactory->CreateSwapChain(
+                    Graphics()->pDevice,
+                    &desc,
+                    &mirror.swap_chain
+            );
+            if (FAILED(result)) {
+                LOG_ERROR("Mirror Split: CreateSwapChain failed: 0x{:x}", static_cast<unsigned>(result));
+                mirror.swap_chain = nullptr;
+                return false;
+            }
         }
 
         mirror.buffer_width = buffer_width;
@@ -471,19 +480,7 @@ namespace AlphaRing::Render::D3d11 {
             content.w <= 0 || content.h <= 0)
             return content;
 
-        const double primary_aspect = static_cast<double>(config.player[0].w) / config.player[0].h;
-        const double output_aspect = static_cast<double>(content.w) / content.h;
-        if (output_aspect < primary_aspect) {
-            const int fitted_height = std::max(1, static_cast<int>(std::lround(content.w / primary_aspect)));
-            content.y += (content.h - fitted_height) / 2;
-            content.h = fitted_height;
-        } else if (output_aspect > primary_aspect) {
-            const int fitted_width = std::max(1, static_cast<int>(std::lround(content.h * primary_aspect)));
-            content.x += (content.w - fitted_width) / 2;
-            content.w = fitted_width;
-        }
-
-        return content;
+        return FitOutputToAspect(content, config.player[0]);
     }
 
     static void UpdateMirrorContentRect(int player) {
@@ -524,6 +521,45 @@ namespace AlphaRing::Render::D3d11 {
         LOG_INFO("Mirror Split: output visibility queued={}", visible);
     }
 
+    static void ShutdownMirrorWindowThread() {
+        SetMirrorWindowsVisible(false);
+        for (auto& mirror : mirror_windows)
+            ReleaseMirrorSwapChain(mirror);
+
+        for (auto& mirror : mirror_windows) {
+            if (mirror.hwnd)
+                PostMessage(mirror.hwnd, WM_CLOSE, 0, 0);
+            if (mirror.backdrop_hwnd)
+                PostMessage(mirror.backdrop_hwnd, WM_CLOSE, 0, 0);
+        }
+        if (mirror_window_thread_id)
+            PostThreadMessage(mirror_window_thread_id, WM_QUIT, 0, 0);
+
+        if (mirror_window_thread) {
+            const DWORD wait = WaitForSingleObject(mirror_window_thread, 5000);
+            if (wait != WAIT_OBJECT_0)
+                LOG_WARNING("Mirror Split: output window thread did not stop within 5 seconds");
+            CloseHandle(mirror_window_thread);
+        }
+
+        mirror_window_thread = nullptr;
+        mirror_window_thread_id = 0;
+        if (mirror_window_ready_event) {
+            CloseHandle(mirror_window_ready_event);
+            mirror_window_ready_event = nullptr;
+        }
+        for (auto& mirror : mirror_windows) {
+            mirror.hwnd = nullptr;
+            mirror.backdrop_hwnd = nullptr;
+            mirror.content_rect = {};
+        }
+        if (mirror_window_class) {
+            UnregisterClass(mirror_window_class_name, GetModuleHandle(nullptr));
+            mirror_window_class = 0;
+        }
+        mirror_windows_visible.store(false, std::memory_order_release);
+    }
+
     void NotifyGameMenuKey() {
         mirror_game_menu_suppressed.store(true, std::memory_order_release);
         SetMirrorWindowsVisible(false);
@@ -560,6 +596,7 @@ namespace AlphaRing::Render::D3d11 {
 
         if (!EnsureMirrorWindowThread()) {
             LOG_ERROR("Mirror Split: failed to initialize the output window thread");
+            ShutdownMirrorWindowThread();
             return false;
         }
         for (int i = 0; i < 2; ++i) {
@@ -602,55 +639,12 @@ namespace AlphaRing::Render::D3d11 {
         return true;
     }
 
-    struct SourceCrop {
-        UINT left;
-        UINT top;
-        UINT width;
-        UINT height;
-    };
-
     static DXGI_FORMAT MirrorSwapChainFormat(DXGI_FORMAT source_format) {
         if (source_format == DXGI_FORMAT_B8G8R8A8_TYPELESS || source_format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
             return DXGI_FORMAT_B8G8R8A8_UNORM;
         if (source_format == DXGI_FORMAT_R8G8B8A8_TYPELESS || source_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)
             return DXGI_FORMAT_R8G8B8A8_UNORM;
         return source_format;
-    }
-
-    static SourceCrop CalculateSourceCrop(
-            UINT source_width,
-            UINT source_height,
-            int player,
-            const RectI& output
-    ) {
-        const UINT player_height = source_height / 2;
-        SourceCrop crop {0, player == 0 ? 0u : player_height, source_width, player_height};
-
-        if (source_width == 0 || player_height == 0 || output.w <= 0 || output.h <= 0)
-            return crop;
-
-        const double source_aspect = static_cast<double>(source_width) / player_height;
-        const double output_aspect = static_cast<double>(output.w) / output.h;
-        if (std::abs(source_aspect - output_aspect) <= source_aspect * 0.001)
-            return crop;
-
-        if (source_aspect > output_aspect) {
-            crop.width = std::clamp(
-                    static_cast<UINT>(std::lround(player_height * output_aspect)),
-                    1u,
-                    source_width
-            );
-            crop.left = (source_width - crop.width) / 2;
-        } else if (source_aspect < output_aspect) {
-            crop.height = std::clamp(
-                    static_cast<UINT>(std::lround(source_width / output_aspect)),
-                    1u,
-                    player_height
-            );
-            crop.top += (player_height - crop.height) / 2;
-        }
-
-        return crop;
     }
 
     static bool PrepareMirrorSwapChainsForStart() {
@@ -821,8 +815,14 @@ namespace AlphaRing::Render::D3d11 {
     }
 
     DefDetourFunction(HRESULT, __stdcall, ResizeBuffers, IDXGISwapChain* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
+        if (main_render_initialization_failed)
+            return ppOriginal_ResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+
         if (!Graphics()->pSwapChain) {
-            InitMainRender(pSwapChain);
+            if (!InitMainRender(pSwapChain)) {
+                main_render_initialization_failed = true;
+                return ppOriginal_ResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+            }
         } else if (Graphics()->pSwapChain != pSwapChain) {
             return ppOriginal_ResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
         }
@@ -836,59 +836,108 @@ namespace AlphaRing::Render::D3d11 {
                 SwapChainFlags
         );
 
-        if (Graphics()->pView) {
-            Graphics()->pView->Release();
-            Graphics()->pView = nullptr;
+        const bool outputs_active = MonitorSplit().mirror_windows_enabled;
+        NotifyMainSwapChainResize();
+        if (outputs_active) {
+            SetMirrorWindowsVisible(false);
+            for (auto& mirror : mirror_windows)
+                ReleaseMirrorSwapChain(mirror);
         }
+
+        Graphics()->ReleaseRenderTargetView();
 
         auto result = ppOriginal_ResizeBuffers(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
 
-        Graphics()->RecreateRenderTargetView();
+        if (!Graphics()->RecreateRenderTargetView()) {
+            LOG_ERROR(
+                    "D3D11: failed to recreate the render target after ResizeBuffers result=0x{:x}",
+                    static_cast<unsigned>(result)
+            );
+        }
 
         return result;
     }
 }
 
 namespace AlphaRing::Render::D3d11 {
-    void InitMainRender(IDXGISwapChain *swapChain) {
-        DXGI_SWAP_CHAIN_DESC sd;
+    bool InitMainRender(IDXGISwapChain *swapChain) {
+        DXGI_SWAP_CHAIN_DESC sd {};
 
         if (Graphics()->pSwapChain) {
             if (Graphics()->pSwapChain != swapChain)
                 LOG_WARNING("D3D11: ignored additional swap chain {:p}", static_cast<void*>(swapChain));
-            return;
+            return Graphics()->pSwapChain == swapChain;
         }
+
+        if (!swapChain)
+            return false;
 
         // Get Device and Context
         Graphics()->pSwapChain = swapChain;
-        Graphics()->pSwapChain->GetDevice(__uuidof(ID3D11Device), (void**)&Graphics()->pDevice);
+        HRESULT result_hr = Graphics()->pSwapChain->GetDevice(
+                __uuidof(ID3D11Device),
+                reinterpret_cast<void**>(&Graphics()->pDevice)
+        );
+        if (FAILED(result_hr) || !Graphics()->pDevice) {
+            LOG_ERROR("D3D11: swap-chain GetDevice failed: 0x{:x}", static_cast<unsigned>(result_hr));
+            Graphics()->pSwapChain = nullptr;
+            return false;
+        }
         Graphics()->pDevice->GetImmediateContext(&Graphics()->pContext);
+        if (!Graphics()->pContext) {
+            LOG_ERROR("D3D11: immediate context is unavailable");
+            Graphics()->pDevice->Release();
+            Graphics()->pDevice = nullptr;
+            Graphics()->pSwapChain = nullptr;
+            return false;
+        }
 
         memcpy(functions + 18, *(void **) Graphics()->pDevice, 43 * sizeof(void *));
         memcpy(functions + 18 + 43, *(void **) Graphics()->pContext, 144 * sizeof(void *));
 
-        bool result = CreateHook();
-
-        assertm(result, "Failed to create hook");
+        if (!CreateHook()) {
+            LOG_ERROR("D3D11: failed to install device hooks");
+            Graphics()->pContext->Release();
+            Graphics()->pDevice->Release();
+            Graphics()->pContext = nullptr;
+            Graphics()->pDevice = nullptr;
+            Graphics()->pSwapChain = nullptr;
+            return false;
+        }
 
         // Get Factory
         IDXGIDevice * pDXGIDevice = nullptr;
-        Graphics()->pDevice->QueryInterface(__uuidof(IDXGIDevice), (void **)&pDXGIDevice);
+        result_hr = Graphics()->pDevice->QueryInterface(__uuidof(IDXGIDevice), (void **)&pDXGIDevice);
 
         IDXGIAdapter * pDXGIAdapter = nullptr;
-        pDXGIDevice->GetAdapter( &pDXGIAdapter );
-
-        pDXGIAdapter->GetParent(__uuidof(IDXGIFactory), (void **)&Graphics()->pIDXGIFactory);
+        if (SUCCEEDED(result_hr) && pDXGIDevice)
+            result_hr = pDXGIDevice->GetAdapter(&pDXGIAdapter);
+        if (SUCCEEDED(result_hr) && pDXGIAdapter)
+            result_hr = pDXGIAdapter->GetParent(__uuidof(IDXGIFactory), (void **)&Graphics()->pIDXGIFactory);
 
         // Release temporary COM objects to prevent memory leaks
-        pDXGIAdapter->Release();
-        pDXGIDevice->Release();
+        if (pDXGIAdapter)
+            pDXGIAdapter->Release();
+        if (pDXGIDevice)
+            pDXGIDevice->Release();
+
+        if (FAILED(result_hr) || !Graphics()->pIDXGIFactory) {
+            LOG_ERROR("D3D11: failed to resolve the DXGI factory: 0x{:x}", static_cast<unsigned>(result_hr));
+            return false;
+        }
 
         // Create Render Target View
-        Graphics()->RecreateRenderTargetView();
+        if (!Graphics()->RecreateRenderTargetView()) {
+            LOG_ERROR("D3D11: failed to create the main render target");
+            return false;
+        }
 
         // Get Window HWND
-        Graphics()->pSwapChain->GetDesc(&sd);
+        result_hr = Graphics()->pSwapChain->GetDesc(&sd);
+        if (FAILED(result_hr) || !sd.OutputWindow) {
+            LOG_ERROR("D3D11: GetDesc failed or returned no output window");
+            return false;
+        }
         Graphics()->hwnd = sd.OutputWindow;
         LOG_INFO(
                 "D3D11 SwapChain: buffer={}x{} windowed={} output_hwnd={:p}",
@@ -898,11 +947,18 @@ namespace AlphaRing::Render::D3d11 {
                 static_cast<void*>(sd.OutputWindow)
         );
 
-        ImGui::Initialize();
-        Window::Initialize();
+        if (!ImGui::Initialize() || !Window::Initialize()) {
+            LOG_ERROR("D3D11: failed to initialize the overlay");
+            ImGui::Shutdown();
+            return false;
+        }
+        return true;
     }
 
     bool Initialize() {
+        if (d3d11_initialized)
+            return true;
+
         const WNDCLASS wc {
                 CS_HREDRAW | CS_VREDRAW,
                 DefWindowProc,
@@ -916,32 +972,49 @@ namespace AlphaRing::Render::D3d11 {
                 "Default Window"
         };
 
-        bool result;
-
-        result = RegisterClass(&wc);
-
-        assertm(result, "failed to register class");
+        const ATOM window_class = RegisterClass(&wc);
+        if (!window_class && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+            LOG_ERROR("D3D11: failed to register bootstrap window class: {}", GetLastError());
+            return false;
+        }
 
         auto hwnd = CreateWindow(wc.lpszClassName, "Default Window", WS_OVERLAPPEDWINDOW, 0, 0,
                                      800, 600, nullptr, nullptr, wc.hInstance, nullptr);
 
-        assertm(hwnd != nullptr, "failed to create window");
+        if (!hwnd) {
+            LOG_ERROR("D3D11: failed to create bootstrap window: {}", GetLastError());
+            if (window_class)
+                UnregisterClass(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
 
-        hD3d11 = GetModuleHandle("d3d11.dll");
+        hD3d11 = GetModuleHandleA("d3d11.dll");
 
-        assertm(hD3d11 != nullptr, "failed to find module \"d3d11.dll\"");
+        if (!hD3d11) {
+            LOG_ERROR("D3D11: d3d11.dll is not loaded");
+            DestroyWindow(hwnd);
+            if (window_class)
+                UnregisterClass(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
 
         p_fD3D11CreateDeviceAndSwapChain = (decltype(p_fD3D11CreateDeviceAndSwapChain)) GetProcAddress(
                 hD3d11, "D3D11CreateDeviceAndSwapChain");
 
-        assertm(p_fD3D11CreateDeviceAndSwapChain != nullptr, "failed to find function \"D3D11CreateDeviceAndSwapChain\"");
+        if (!p_fD3D11CreateDeviceAndSwapChain) {
+            LOG_ERROR("D3D11: D3D11CreateDeviceAndSwapChain is unavailable");
+            DestroyWindow(hwnd);
+            if (window_class)
+                UnregisterClass(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
 
-        IDXGISwapChain *swapChain;
-        ID3D11Device *device;
-        ID3D11DeviceContext *context;
+        IDXGISwapChain *swapChain = nullptr;
+        ID3D11Device *device = nullptr;
+        ID3D11DeviceContext *context = nullptr;
 
-        D3D_FEATURE_LEVEL featureLevel;
-        const D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_11_0};
+        D3D_FEATURE_LEVEL featureLevel {};
+        const D3D_FEATURE_LEVEL featureLevels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1};
         const DXGI_SWAP_CHAIN_DESC swapChainDesc {
                 {
                         0,
@@ -966,10 +1039,34 @@ namespace AlphaRing::Render::D3d11 {
                 DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH
         };
 
-        result = SUCCEEDED(p_fD3D11CreateDeviceAndSwapChain(0, D3D_DRIVER_TYPE_HARDWARE, 0, 0, featureLevels, 2, D3D11_SDK_VERSION,
-                                                            &swapChainDesc, &swapChain, &device, &featureLevel, &context));
+        const HRESULT create_result = p_fD3D11CreateDeviceAndSwapChain(
+                nullptr,
+                D3D_DRIVER_TYPE_HARDWARE,
+                nullptr,
+                0,
+                featureLevels,
+                2,
+                D3D11_SDK_VERSION,
+                &swapChainDesc,
+                &swapChain,
+                &device,
+                &featureLevel,
+                &context
+        );
 
-        assertm(result, "failed to create device and swapchain");
+        if (FAILED(create_result) || !swapChain || !device || !context) {
+            LOG_ERROR("D3D11: bootstrap device creation failed: 0x{:x}", static_cast<unsigned>(create_result));
+            if (context)
+                context->Release();
+            if (device)
+                device->Release();
+            if (swapChain)
+                swapChain->Release();
+            DestroyWindow(hwnd);
+            if (window_class)
+                UnregisterClass(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
 
         memcpy(functions, *(void **) swapChain, 18 * sizeof(void *));
 
@@ -980,13 +1077,49 @@ namespace AlphaRing::Render::D3d11 {
         DestroyWindow(hwnd);
         UnregisterClass(wc.lpszClassName, wc.hInstance);
 
-        result = AlphaRing::Hook::Detour({
+        const bool result = AlphaRing::Hook::Detour({
             {functions[8],  Present,       (void **) &ppOriginal_Present},
             {functions[13], ResizeBuffers, (void **) &ppOriginal_ResizeBuffers},
         });
 
-        assertm(result, "failed to create d3d11 hook");
+        if (!result) {
+            LOG_ERROR("D3D11: failed to install swap-chain hooks");
+            return false;
+        }
 
-        return result;
+        d3d11_initialized = true;
+        return true;
+    }
+
+    bool Shutdown() {
+        if (!d3d11_initialized && !Graphics()->pDevice)
+            return true;
+
+        StopMirrorSplitWindows();
+        ShutdownMirrorWindowThread();
+        NotifyMccModuleUnloaded(0);
+        Window::Shutdown();
+        ImGui::Shutdown();
+
+        Graphics()->ReleaseRenderTargetView();
+        if (Graphics()->pIDXGIFactory) {
+            Graphics()->pIDXGIFactory->Release();
+            Graphics()->pIDXGIFactory = nullptr;
+        }
+        if (Graphics()->pContext) {
+            Graphics()->pContext->Release();
+            Graphics()->pContext = nullptr;
+        }
+        if (Graphics()->pDevice) {
+            Graphics()->pDevice->Release();
+            Graphics()->pDevice = nullptr;
+        }
+
+        // MCC owns the main swap chain; AlphaRing only observes it.
+        Graphics()->pSwapChain = nullptr;
+        Graphics()->hwnd = nullptr;
+        main_render_initialization_failed = false;
+        d3d11_initialized = false;
+        return true;
     }
 }

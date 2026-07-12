@@ -11,7 +11,7 @@
 #include "global/Global.h"
 #include "filesystem/Filesystem.h"
 
-#include "../D3d11/D3d11.h"
+#include "../d3d11/D3d11.h"
 #include "./game/mcc/CMCCContext.h"
 #include "./game/halo3/CHalo3Context.h"
 
@@ -29,6 +29,8 @@ static ICContext* pages[7] {
 };
 
 namespace AlphaRing::Render::ImGui {
+    static bool initialized = false;
+
     static void ApplyTheme(float scale) {
         auto& style = ::ImGui::GetStyle();
 
@@ -115,18 +117,34 @@ namespace AlphaRing::Render::ImGui {
     }
 
     bool Initialize() {
+        if (initialized)
+            return true;
+        if (!Graphics()->hwnd || !Graphics()->pDevice || !Graphics()->pContext)
+            return false;
+
         ::ImGui::CreateContext();
-        ImGui_ImplWin32_Init(Graphics()->hwnd);
-        ImGui_ImplDX11_Init(Graphics()->pDevice, Graphics()->pContext);
+        if (!ImGui_ImplWin32_Init(Graphics()->hwnd)) {
+            ::ImGui::DestroyContext();
+            return false;
+        }
+        if (!ImGui_ImplDX11_Init(Graphics()->pDevice, Graphics()->pContext)) {
+            ImGui_ImplWin32_Shutdown();
+            ::ImGui::DestroyContext();
+            return false;
+        }
         ImGuiIO &io = ::ImGui::GetIO();
 
         // config
         io.MouseDrawCursor = true;
-        io.ConfigFlags = ImGuiConfigFlags_NoMouseCursorChange;
+        io.ConfigFlags = ImGuiConfigFlags_NoMouseCursorChange |
+                         ImGuiConfigFlags_NavEnableKeyboard |
+                         ImGuiConfigFlags_NavEnableGamepad;
 
-        // ini
-        io.IniFilename = "./alpha_ring/imgui.ini";
-        ::ImGui::LoadIniSettingsFromDisk("../../../alpha_ring/imgui.ini");
+        // Keep the path storage alive for ImGui's non-owning IniFilename pointer.
+        static std::string ini_path;
+        ini_path = AlphaRing::Filesystem::DataPath("imgui.ini").string();
+        io.IniFilename = ini_path.c_str();
+        ::ImGui::LoadIniSettingsFromDisk(io.IniFilename);
 
         const float scale = GetDpiForWindow(Graphics()->hwnd) * 1.0f / 96.0f;
 
@@ -146,16 +164,30 @@ namespace AlphaRing::Render::ImGui {
 
         ApplyTheme(scale);
 
+        initialized = true;
         return true;
     }
 
+    void Shutdown() {
+        if (!initialized)
+            return;
+
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ::ImGui::DestroyContext();
+        initialized = false;
+    }
+
     void Render() {
+        if (!initialized)
+            return;
+
+        AlphaRing::Input::Update();
+
         // Skip ImGui processing entirely when menu is hidden
         // This prevents ImGui from capturing input and interfering with game menus
-        if (!AlphaRing::Global::Global()->show_imgui) {
-            AlphaRing::Input::Update();
+        if (!AlphaRing::Global::Global()->show_imgui)
             return;
-        }
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
@@ -163,8 +195,6 @@ namespace AlphaRing::Render::ImGui {
 
         bool inGame = MCC::IsInGame();
         auto pGameGlobal = GameGlobal();
-
-        AlphaRing::Input::Update();
 
         if (!AlphaRing::Global::Global()->show_imgui_mouse)
             ::ImGui::SetMouseCursor(ImGuiMouseCursor_None);

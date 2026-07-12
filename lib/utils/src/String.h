@@ -1,14 +1,15 @@
 #pragma once
 
-#include <locale>
-#include <codecvt>
+#include <cstddef>
 
 #define STR_CPY(return_type, name, ...) inline return_type name(__VA_ARGS__) { \
+    if (dest == nullptr || n == 0) return 0; \
+    if (src == nullptr) { dest[0] = 0; return 0; } \
     size_t i = 0; \
-    for (; i < n; i++) { \
+    for (; i + 1 < n && src[i] != 0; ++i) { \
         dest[i] = src[i]; \
-        if (src[i] == 0) break; \
     } \
+    dest[i] = 0; \
     return i; \
 } \
 

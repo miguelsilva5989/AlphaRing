@@ -1,0 +1,83 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure tests
+        run: cmake -S tests -B build-tests -G Ninja
+      - name: Build tests
+        run: cmake --build build-tests
+      - name: Run tests
+        run: ctest --test-dir build-tests --output-on-failure
+
+  mingw-release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y ninja-build mingw-w64
+      - name: Configure
+        run: cmake -S . -B build-mingw -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-mingw --parallel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AlphaRing-MinGW
+          path: |
+            build-mingw/WTSAPI32.dll
+            build-mingw/WTSAPI32.dll.debug
+
+  msvc-release:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [core-tests, mingw-release, msvc-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AlphaRing-MinGW
+          path: package
+      - name: Assemble release
+        run: |
+          mkdir -p package/scripts package/res
+          cp scripts/install-linux.sh scripts/install-windows.ps1 package/scripts/
+          cp -r res/. package/res/
+          cp README.md LICENCE.txt CONTRIBUTORS.md THIRD_PARTY_NOTICES.md package/
+          chmod 0644 package/WTSAPI32.dll
+          cd package
+          zip -r ../AlphaRing-${{ github.ref_name }}.zip .
+          cd ..
+          sha256sum AlphaRing-${{ github.ref_name }}.zip > AlphaRing-${{ github.ref_name }}.zip.sha256
+          zip AlphaRing-${{ github.ref_name }}-symbols.zip package/WTSAPI32.dll.debug
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            AlphaRing-${{ github.ref_name }}.zip
+            AlphaRing-${{ github.ref_name }}.zip.sha256
+            AlphaRing-${{ github.ref_name }}-symbols.zip

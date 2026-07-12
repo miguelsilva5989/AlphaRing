@@ -1,8 +1,10 @@
 #pragma once
 
-#include <vector>
-#include <Windows.h>
+#include <windows.h>
 #include <initializer_list>
+#include <mutex>
+#include <string>
+#include <vector>
 
 class ModuleDefinition {
 public:
@@ -10,7 +12,11 @@ public:
 
     void* GetFunc(int index);
 private:
-    HMODULE m_hModule;
-    std::vector<void*> m_funcs;
+    void Load();
 
+    std::string m_moduleName;
+    std::vector<std::string> m_functionNames;
+    std::once_flag m_loadOnce;
+    HMODULE m_hModule = nullptr;
+    std::vector<void*> m_funcs;
 };

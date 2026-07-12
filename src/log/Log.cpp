@@ -1,7 +1,7 @@
 #include "Log.h"
 
 #include "spdlog.h"
-#include "sinks/basic_file_sink.h"
+#include "sinks/rotating_file_sink.h"
 
 #include "common.h"
 
@@ -25,20 +25,17 @@ namespace AlphaRing::Log {
 
     bool Init() {
         try {
-            // Get the path to the DLL (win64 folder)
-            char dllPath[MAX_PATH];
-            HMODULE hModule = nullptr;
-            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                              (LPCSTR)&Init, &hModule);
-            GetModuleFileNameA(hModule, dllPath, MAX_PATH);
-
-            std::filesystem::path logPath = std::filesystem::path(dllPath).parent_path() / "alpharing.log";
+            const std::filesystem::path logPath = AlphaRing::Filesystem::DataPath("alpharing.log");
 
             // Create sinks - file sink is primary, console is optional
             std::vector<spdlog::sink_ptr> sinks;
 
-            // File sink - always enabled, flush on every message for crash safety
-            auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logPath.string(), true);
+            auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                    logPath.string(),
+                    5 * 1024 * 1024,
+                    3,
+                    false
+            );
             file_sink->set_level(spdlog::level::debug);
             sinks.push_back(file_sink);
 
@@ -56,7 +53,7 @@ namespace AlphaRing::Log {
 
             default_logger = std::make_shared<spdlog::logger>("default", sinks.begin(), sinks.end());
             default_logger->set_level(spdlog::level::debug);
-            default_logger->flush_on(spdlog::level::debug);  // Flush immediately - critical for crash debugging
+            default_logger->flush_on(spdlog::level::warn);
 
             spdlog::register_logger(default_logger);
 

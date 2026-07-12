@@ -2,4 +2,5 @@
 
 namespace AlphaRing::Render::Window {
     bool Initialize();
+    void Shutdown();
 }

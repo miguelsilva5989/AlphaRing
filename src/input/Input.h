@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Windows.h>
-#include <Xinput.h>
+#include <windows.h>
+#include <xinput.h>
 
 namespace AlphaRing {
     namespace Input {

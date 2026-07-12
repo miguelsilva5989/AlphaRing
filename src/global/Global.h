@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #define DefGlobal(name) \
     struct name##_t;    \
     extern name##_t s_##name; \
@@ -34,13 +36,13 @@ namespace AlphaRing::Global {
 
     namespace MCC {
         DefGlobal(Splitscreen) {
-            bool b_override;
-            int player_count = 1;
+            std::atomic<bool> b_override {false};
+            std::atomic<int> player_count {1};
 
             // player 0
-            bool b_player0_use_km = true;
-            bool b_override_profile = false;
-            bool b_use_player0_profile = true;
+            std::atomic<bool> b_player0_use_km {true};
+            std::atomic<bool> b_override_profile {false};
+            std::atomic<bool> b_use_player0_profile {true};
         };
     }
 }

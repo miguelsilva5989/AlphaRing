@@ -70,7 +70,7 @@ void ImGui::CustomWidget::CurveEditor::render_left() {
     for (int i = 0; i < CURVE_COUNT; ++i) {
         const int id_prefix = i << 2;
         auto& curve = m_curves[i];
-        ImGui::Text(curve.p_name);
+        ImGui::TextUnformatted(curve.p_name);
         ImGui::SameLine();
         ImGui::PushID(id_prefix | 0);
         ImGui::Checkbox("V", &curve.visibility);
@@ -86,7 +86,7 @@ void ImGui::CustomWidget::CurveEditor::render_left() {
 
         sprintf(buffer, "Value: %.2f", curve.getValue(m_frame));
         ImGui::SameLine();
-        ImGui::Text(buffer);
+        ImGui::TextUnformatted(buffer);
     }
 }
 

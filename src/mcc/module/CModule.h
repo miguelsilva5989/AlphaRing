@@ -3,7 +3,7 @@
 #include "mcc/module/patch/Patch.h"
 #include "mcc/module/entry/entry.h"
 
-#include <Windows.h>
+#include <windows.h>
 
 #include "mcc/CGameEngine.h"
 
@@ -20,15 +20,15 @@ class CModule {
 public:
     CModule(EntrySet* entrySet, std::initializer_list<CPatch> patches);
 
-    void load_module(const module_info_t *p_info);
+    bool load_module(const module_info_t *p_info);
 
     void unload_module();
 
-    inline module_info_t info() { return m_info;}
+    inline module_info_t info() const { return m_info;}
     inline CPatchSet* patches() {return &m_patches;}
 
 private:
-    module_info_t m_info;
+    module_info_t m_info {};
     EntrySet* m_entries;
     CPatchSet m_patches;
 
@@ -37,8 +37,8 @@ private:
         __int64 (__fastcall* CreateGameEngine)(CGameEngine** ppGameEngine);
         errno_t (__fastcall* SetLibrarySettings)(wchar_t *Source); // set language?
     };
-    FunctionTable pTarget;
-    FunctionTable ppOriginal;
+    FunctionTable pTarget {};
+    FunctionTable ppOriginal {};
 };
 
 namespace MCC::Module {

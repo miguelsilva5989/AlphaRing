@@ -3,4 +3,6 @@ cmake-build-debug/
 .idea/
 build/
 build-mingw/
+build-tests/
+out/
 /.vs

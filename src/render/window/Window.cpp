@@ -7,7 +7,7 @@
 
 #include "imgui.h"
 
-#include "../D3d11/D3d11.h"
+#include "../d3d11/D3d11.h"
 
 LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -79,8 +79,17 @@ namespace AlphaRing::Render::Window {
     }
 
     bool Initialize() {
+        if (!Graphics()->hwnd || oldWndProc)
+            return oldWndProc != nullptr;
+
         oldWndProc = (WNDPROC)SetWindowLongPtr(Graphics()->hwnd, GWLP_WNDPROC, (LONG_PTR)dWndProc);
 
         return oldWndProc != nullptr;
+    }
+
+    void Shutdown() {
+        if (oldWndProc && Graphics()->hwnd && IsWindow(Graphics()->hwnd))
+            SetWindowLongPtr(Graphics()->hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(oldWndProc));
+        oldWndProc = nullptr;
     }
 }

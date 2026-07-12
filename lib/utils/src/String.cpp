@@ -1,17 +1,33 @@
 #include "String.h"
 
-static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+#include <windows.h>
 
 void String::convert(char *dest, const wchar_t *src, size_t n) {
-    auto str = converter.to_bytes(src);
-    auto length = str.length() < n - 1 ? str.length() : n - 1;
-    memcpy(dest, str.c_str(), length);
-    dest[length] = '\0';
+    if (!dest || n == 0)
+        return;
+    dest[0] = '\0';
+    if (!src)
+        return;
+
+    const int capacity = n > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(n);
+    const int result = WideCharToMultiByte(CP_UTF8, 0, src, -1, dest, capacity, nullptr, nullptr);
+    if (result == 0)
+        dest[0] = '\0';
+    else
+        dest[n - 1] = '\0';
 }
 
 void String::convert(wchar_t *dest, const char *src, size_t n) {
-    auto str = converter.from_bytes(src);
-    auto length = str.length() < n - 1 ? str.length() : n - 1;
-    memcpy(dest, str.c_str(), length * sizeof(wchar_t));
-    dest[length] = L'\0';
+    if (!dest || n == 0)
+        return;
+    dest[0] = L'\0';
+    if (!src)
+        return;
+
+    const int capacity = n > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(n);
+    const int result = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, src, -1, dest, capacity);
+    if (result == 0)
+        dest[0] = L'\0';
+    else
+        dest[n - 1] = L'\0';
 }

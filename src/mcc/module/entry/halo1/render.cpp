@@ -1,6 +1,6 @@
 #include "halo1.h"
 
-#include <Windows.h>
+#include <windows.h>
 
 namespace Halo1::Entry::Render {
     void Prologue() {

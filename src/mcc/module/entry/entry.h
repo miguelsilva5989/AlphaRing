@@ -13,6 +13,7 @@ public:
         : Entry(set, offset, reinterpret_cast<void*>(pDetour)) {}
 
     bool update(__int64 hModule);
+    bool detach();
 
     __int64 m_offset;
     void* m_pOriginal;
@@ -24,10 +25,11 @@ class EntrySet {
 public:
     void append(Entry* entry);
     bool update(__int64 hModule);
+    bool detach();
 
 private:
     inline static const int MAX_ENTRY = 20;
-    int entryCount;
-    Entry* entryArray[MAX_ENTRY];
+    int entryCount = 0;
+    Entry* entryArray[MAX_ENTRY] {};
 
 };

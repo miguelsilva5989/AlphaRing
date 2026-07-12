@@ -323,7 +323,10 @@ void CGamepadMapping::ImGuiContext(int preferred_controller) {
             const char* binding_name = action_names[binding_action] ? action_names[binding_action] : "Unknown action";
             ImGui::TextColored(ImVec4(0.95f, 0.68f, 0.30f, 1.0f), "%s", binding_name);
             ImGui::SameLine();
-            ImGui::TextDisabled(binding_waiting_for_release ? "Release controller buttons" : "Press a controller button");
+            ImGui::TextDisabled(
+                    "%s",
+                    binding_waiting_for_release ? "Release controller buttons" : "Press a controller button"
+            );
             ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 62.0f);
             if (ImGui::SmallButton("Cancel")) {
                 binding_mapping = nullptr;

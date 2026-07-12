@@ -132,6 +132,13 @@ namespace AlphaRing::Render::D3d11 {
         }
     }
 
+    void NotifyMainSwapChainResize() {
+        if (!NativeRenderActive())
+            return;
+        LOG_WARNING("Native CE: suspended after a main swap-chain resize; reload Halo CE to reactivate it");
+        DeactivateNativeRender();
+    }
+
     void SetNativeRenderEnabled(bool enabled) {
         if (!enabled && NativeRenderActive()) {
             LOG_WARNING("Native CE: cannot disable while Halo CE is active; unload Halo CE first");

@@ -37,7 +37,7 @@ Windows Registry Editor Version 5.00
 #include "base_sink.h"
 
 #include "../details/windows_include.h"
-#include <WinBase.h>
+#include <winbase.h>
 
 #include <mutex>
 #include <string>

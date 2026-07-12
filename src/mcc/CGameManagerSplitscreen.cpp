@@ -36,7 +36,8 @@ void CGameManager::set_vibration(CGameManager *self, DWORD dwUserIndex, XINPUT_V
         return;
     }
 
-    if (dwUserIndex >= p_setting->player_count)
+    const int player_count = p_setting->player_count.load(std::memory_order_acquire);
+    if (dwUserIndex >= static_cast<DWORD>(player_count))
         return;
 
     if (pVibration == nullptr || (p_device = get_controller(dwUserIndex)) == nullptr)
@@ -52,7 +53,7 @@ bool CGameManager::get_xbox_user_id(CGameManager *self, __int64 *pId, wchar_t *p
     if (!p_setting->b_override || !index)
         return ppOriginal.get_xbox_user_id(self, pId, pName, size, index);
 
-    if (index >= p_setting->player_count)
+    if (!p_profile || index >= p_setting->player_count.load(std::memory_order_acquire))
         return false;
 
     if (pId)
@@ -72,6 +73,9 @@ bool CGameManager::get_key_state(CGameManager *self, DWORD index, input_data_t *
     auto device_manager = DeviceManager();
     auto p_global = AlphaRing::Global::Global();
 
+    if (!p_input || !device_manager)
+        return false;
+
     memset(p_input, 0, sizeof(input_data_t));
 
     if (p_global->show_imgui) {
@@ -84,7 +88,8 @@ bool CGameManager::get_key_state(CGameManager *self, DWORD index, input_data_t *
     if (!p_profile->b_override)
         return ppOriginal.get_key_state(self, index, p_input);
 
-    if (index >= p_profile->player_count)
+    const int player_count = p_profile->player_count.load(std::memory_order_acquire);
+    if (index >= static_cast<DWORD>(player_count))
         return false;
 
     auto delta_time = CalculateInputDelta(device_manager);
@@ -114,7 +119,7 @@ CUserProfile* CGameManager::get_player_profile(CGameManager *self, __int64 xid) 
     auto index = get_index(xid);
     auto p_setting = AlphaRing::Global::MCC::Splitscreen();
 
-    if (!p_setting->b_override)
+    if (!p_setting->b_override || index < 0)
         return ppOriginal.get_player_profile(self, xid);
 
     if (!p_setting->b_override_profile && ((!index) || (index && p_setting->b_use_player0_profile)))
@@ -123,14 +128,15 @@ CUserProfile* CGameManager::get_player_profile(CGameManager *self, __int64 xid) 
     if (p_setting->b_use_player0_profile)
         return &get_profile(0)->profile;
 
-    return &get_profile(get_index(xid))->profile;
+    auto* profile = get_profile(index);
+    return profile ? &profile->profile : ppOriginal.get_player_profile(self, xid);
 }
 
 CGamepadMapping* CGameManager::retrive_gamepad_mapping(CGameManager *self, __int64 xid) {
     auto index = get_index(xid);
     auto p_setting = AlphaRing::Global::MCC::Splitscreen();
 
-    if (!p_setting->b_override)
+    if (!p_setting->b_override || index < 0)
         return ppOriginal.retrive_gamepad_mapping(self, xid);
 
     if (!p_setting->b_override_profile && ((!index) || (index && p_setting->b_use_player0_profile)))
@@ -139,5 +145,6 @@ CGamepadMapping* CGameManager::retrive_gamepad_mapping(CGameManager *self, __int
     if (p_setting->b_use_player0_profile)
         return &get_profile(0)->mapping;
 
-    return &get_profile(get_index(xid))->mapping;
+    auto* profile = get_profile(index);
+    return profile ? &profile->mapping : ppOriginal.retrive_gamepad_mapping(self, xid);
 }

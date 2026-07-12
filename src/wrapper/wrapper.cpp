@@ -2,42 +2,51 @@
 
 #include "WtsApi32.h"
 
-ModuleDefinition module{
-    WRAPPER_DLL_NAME,
-    {
+static ModuleDefinition& SystemWtsApi32() {
+    static ModuleDefinition module {
+        WRAPPER_DLL_NAME,
+        {
             "WTSRegisterSessionNotification",
             "WTSUnRegisterSessionNotification",
             "WTSQueryUserToken",
             "WTSQuerySessionInformationW",
             "WTSFreeMemory"
-    }
-};
+        }
+    };
+    return module;
+}
 
 extern "C" {
 #pragma comment(linker, "/EXPORT:WTSRegisterSessionNotification=WTSRegisterSessionNotificationWrapper")
 BOOL __stdcall WTSRegisterSessionNotificationWrapper(HWND hWnd, DWORD dwFlags) {
-    return ((BOOL (__stdcall *)(HWND, DWORD)) module.GetFunc(0))(hWnd, dwFlags);
+    const auto function = reinterpret_cast<BOOL (__stdcall *)(HWND, DWORD)>(SystemWtsApi32().GetFunc(0));
+    return function ? function(hWnd, dwFlags) : FALSE;
 }
 
 #pragma comment(linker, "/EXPORT:WTSUnRegisterSessionNotification=WTSUnRegisterSessionNotificationWrapper")
 BOOL __stdcall WTSUnRegisterSessionNotificationWrapper(HWND hWnd) {
-    return ((BOOL (__stdcall *)(HWND)) module.GetFunc(1))(hWnd);
+    const auto function = reinterpret_cast<BOOL (__stdcall *)(HWND)>(SystemWtsApi32().GetFunc(1));
+    return function ? function(hWnd) : FALSE;
 }
 
 #pragma comment(linker, "/EXPORT:WTSQueryUserToken=WTSQueryUserTokenWrapper")
 BOOL __stdcall WTSQueryUserTokenWrapper(ULONG SessionId, PHANDLE phToken) {
-    return ((BOOL (__stdcall *)(ULONG, PHANDLE)) module.GetFunc(2))(SessionId, phToken);
+    const auto function = reinterpret_cast<BOOL (__stdcall *)(ULONG, PHANDLE)>(SystemWtsApi32().GetFunc(2));
+    return function ? function(SessionId, phToken) : FALSE;
 }
 
 #pragma comment(linker, "/EXPORT:WTSQuerySessionInformationW=WTSQuerySessionInformationWWrapper")
 BOOL __stdcall WTSQuerySessionInformationWWrapper(HANDLE hServer, DWORD SessionId, WTS_INFO_CLASS WTSInfoClass,
                                                   LPWSTR *ppBuffer, DWORD *pBytesReturned) {
-    return ((BOOL (__stdcall *)(HANDLE, DWORD, WTS_INFO_CLASS, LPWSTR *, DWORD *))
-                module.GetFunc(3)) (hServer, SessionId, WTSInfoClass, ppBuffer, pBytesReturned);
+    const auto function = reinterpret_cast<BOOL (__stdcall *)(HANDLE, DWORD, WTS_INFO_CLASS, LPWSTR*, DWORD*)>(
+            SystemWtsApi32().GetFunc(3));
+    return function ? function(hServer, SessionId, WTSInfoClass, ppBuffer, pBytesReturned) : FALSE;
 }
 
 #pragma comment(linker, "/EXPORT:WTSFreeMemory=WTSFreeMemoryWrapper")
 void __stdcall WTSFreeMemoryWrapper(PVOID pMemory) {
-    return ((void (__stdcall *)(PVOID)) module.GetFunc(4))(pMemory);
+    const auto function = reinterpret_cast<void (__stdcall *)(PVOID)>(SystemWtsApi32().GetFunc(4));
+    if (function)
+        function(pMemory);
 }
 }
