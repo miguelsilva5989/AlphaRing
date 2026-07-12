@@ -50,7 +50,21 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: pwsh
+        run: |
+          $buildOutput = & cmake --build build --config Release --parallel 2>&1
+          $exitCode = $LASTEXITCODE
+          $buildOutput | ForEach-Object { Write-Host $_ }
+          if ($exitCode -ne 0) {
+            $buildOutput |
+              Where-Object { "$_" -match '(?i)(fatal error|error [A-Z]+[0-9]+|LNK[0-9]+|MSB[0-9]+)' } |
+              Select-Object -First 20 |
+              ForEach-Object {
+                $message = "$_".Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+                Write-Host "::error title=MSVC build::$message"
+              }
+            exit $exitCode
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: AlphaRing-MSVC
