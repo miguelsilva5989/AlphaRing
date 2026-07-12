@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -13,7 +14,7 @@ jobs:
   core-tests:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Configure tests
         run: cmake -S tests -B build-tests -G Ninja
       - name: Build tests
@@ -24,7 +25,7 @@ jobs:
   mingw-release:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - name: Install MinGW-w64
@@ -33,7 +34,7 @@ jobs:
         run: cmake -S . -B build-mingw -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build-mingw --parallel
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: AlphaRing-MinGW
           path: |
@@ -43,13 +44,19 @@ jobs:
   msvc-release:
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
         run: cmake --build build --config Release --parallel
+      - uses: actions/upload-artifact@v7
+        with:
+          name: AlphaRing-MSVC
+          path: |
+            build/Release/WTSAPI32.dll
+            build/Release/WTSAPI32.pdb
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -58,8 +65,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
         with:
           name: AlphaRing-MinGW
           path: package
@@ -75,7 +82,7 @@ jobs:
           cd ..
           sha256sum AlphaRing-${{ github.ref_name }}.zip > AlphaRing-${{ github.ref_name }}.zip.sha256
           zip AlphaRing-${{ github.ref_name }}-symbols.zip package/WTSAPI32.dll.debug
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             AlphaRing-${{ github.ref_name }}.zip

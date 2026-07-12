@@ -1,8 +1,6 @@
 #include "ThreadLocalStorage.h"
 
 #include <windows.h>
-#include <iostream>
-#include <print>
 #include <winnt.h>
 #include <winternl.h>
 
